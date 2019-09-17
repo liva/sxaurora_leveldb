@@ -111,6 +111,12 @@ static bool FLAGS_reuse_logs = false;
 // Use the db with the following name.
 static const char* FLAGS_db = nullptr;
 
+// If true, use vefs
+static int FLAGS_vefs = false;
+
+// If true, use memenv
+static int FLAGS_mem = false;
+
 namespace leveldb {
 
 namespace {
@@ -914,7 +920,13 @@ class Benchmark {
 
 }  // namespace leveldb
 
+#include <sched.h>
 int main(int argc, char** argv) {
+  cpu_set_t mask;
+  CPU_ZERO(&mask);
+  CPU_SET(0, &mask);
+  sched_setaffinity(0, sizeof(mask), &mask);
+
   FLAGS_write_buffer_size = leveldb::Options().write_buffer_size;
   FLAGS_max_file_size = leveldb::Options().max_file_size;
   FLAGS_block_size = leveldb::Options().block_size;
@@ -960,13 +972,25 @@ int main(int argc, char** argv) {
       FLAGS_open_files = n;
     } else if (strncmp(argv[i], "--db=", 5) == 0) {
       FLAGS_db = argv[i] + 5;
+    } else if (sscanf(argv[i], "--vefs=%d%c", &n, &junk) == 1 &&
+               (n == 0 || n == 1)) {
+      FLAGS_vefs = n;
+    } else if (sscanf(argv[i], "--mem=%d%c", &n, &junk) == 1 &&
+               (n == 0 || n == 1)) {
+      FLAGS_mem = n;
     } else {
       fprintf(stderr, "Invalid flag '%s'\n", argv[i]);
       exit(1);
     }
   }
 
-  leveldb::g_env = leveldb::Env::Default();
+  if (FLAGS_vefs) {
+    leveldb::g_env = leveldb::NewVeEnv(leveldb::Env::Default());
+  } else if (FLAGS_mem) {
+    leveldb::g_env = leveldb::NewMemEnv(leveldb::Env::Default());
+  } else {
+    leveldb::g_env = leveldb::Env::Default();
+  }
 
   // Choose a location for the test database if none given with --db=<path>
   if (FLAGS_db == nullptr) {
@@ -975,7 +999,17 @@ int main(int argc, char** argv) {
     FLAGS_db = default_db_path.c_str();
   }
 
-  leveldb::Benchmark benchmark;
-  benchmark.Run();
+  {
+    leveldb::Benchmark benchmark;
+    benchmark.Run();
+  }
+
+  if (FLAGS_vefs) {
+    delete leveldb::g_env;
+  }
+  extern uint64_t taken_time, tmp_var;
+  printf(">> %ld\n", taken_time);
+  printf(">> %ld\n", tmp_var);
+
   return 0;
 }

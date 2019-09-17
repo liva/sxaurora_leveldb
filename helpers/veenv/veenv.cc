@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#include "helpers/memenv/memenv.h"
+#include "helpers/veenv/veenv.h"
 
 #include <string.h>
 
@@ -11,28 +11,38 @@
 #include <string>
 #include <vector>
 
+#include <vefs.h>
 #include "leveldb/env.h"
 #include "leveldb/status.h"
 #include "port/port.h"
 #include "port/thread_annotations.h"
 #include "util/mutexlock.h"
 
-static inline uint64_t ve_get() {
+/*static inline uint64_t ve_get() {
   uint64_t ret;
   void* vehva = ((void*)0x000000001000);
   asm volatile("lhm.l %0,0(%1)" : "=r"(ret) : "r"(vehva));
   return ((uint64_t)1000 * ret) / 800;
-}
-extern uint64_t taken_time;
+}*/
+
+uint64_t taken_time = 0;
+uint64_t tmp_var = 0;
 namespace leveldb {
 
 namespace {
+
+constexpr const size_t kWritableFileBufferSize = 65536;
 
 class FileState {
  public:
   // FileStates are reference counted. The initial reference count is zero
   // and the caller must call Ref() at least once.
-  FileState() : refs_(0), size_(0) {}
+  // FileState() : refs_(0), size_(0), vefs_(Vefs::Get()) {}
+  FileState() = delete;
+  FileState(const std::string& fn) : refs_(0), vefs_(Vefs::Get()) {
+    inode_ = vefs_->Create(fn, false);
+    size_ = vefs_->GetLen(inode_);
+  }
 
   // No copying allowed.
   FileState(const FileState&) = delete;
@@ -58,6 +68,7 @@ class FileState {
     }
 
     if (do_delete) {
+      vefs_->Delete(inode_);
       delete this;
     }
   }
@@ -69,11 +80,7 @@ class FileState {
 
   void Truncate() {
     MutexLock lock(&blocks_mutex_);
-    for (char*& block : blocks_) {
-      delete[] block;
-    }
-    blocks_.clear();
-    size_ = 0;
+    vefs_->Truncate(inode_, 0);
   }
 
   Status Read(uint64_t offset, size_t n, Slice* result, char* scratch) const {
@@ -91,23 +98,8 @@ class FileState {
     }
 
     uint64_t t = ve_get();
-    assert(offset / kBlockSize <= std::numeric_limits<size_t>::max());
-    size_t block = static_cast<size_t>(offset / kBlockSize);
-    size_t block_offset = offset % kBlockSize;
-    size_t bytes_to_copy = n;
-    char* dst = scratch;
-
-    while (bytes_to_copy > 0) {
-      size_t avail = kBlockSize - block_offset;
-      if (avail > bytes_to_copy) {
-        avail = bytes_to_copy;
-      }
-      memcpy(dst, blocks_[block] + block_offset, avail);
-
-      bytes_to_copy -= avail;
-      dst += avail;
-      block++;
-      block_offset = 0;
+    if (vefs_->Read(inode_, offset, n, scratch) != Vefs::Status::kOk) {
+      return Status::IOError("Error in VeFS");
     }
     taken_time += ve_get() - t;
 
@@ -119,37 +111,24 @@ class FileState {
     const char* src = data.data();
     size_t src_len = data.size();
 
+    return AppendSub(src, src_len);
+  }
+
+  Status AppendSub(const char* buf, size_t len) {
     MutexLock lock(&blocks_mutex_);
     uint64_t t = ve_get();
-    while (src_len > 0) {
-      size_t avail;
-      size_t offset = size_ % kBlockSize;
-
-      if (offset != 0) {
-        // There is some room in the last block.
-        avail = kBlockSize - offset;
-      } else {
-        // No room in the last block; push new one.
-        blocks_.push_back(new char[kBlockSize]);
-        avail = kBlockSize;
-      }
-
-      if (avail > src_len) {
-        avail = src_len;
-      }
-      memcpy(blocks_.back() + offset, src, avail);
-      src_len -= avail;
-      src += avail;
-      size_ += avail;
+    if (vefs_->Append(inode_, buf, len) != Vefs::Status::kOk) {
+      return Status::IOError("Error in VeFS");
     }
     taken_time += ve_get() - t;
+    size_ += len;
 
     return Status::OK();
   }
 
- private:
-  enum { kBlockSize = 8 * 1024 };
+  void Sync() { vefs_->Sync(inode_); }
 
+ private:
   // Private since only Unref() should be used to delete it.
   ~FileState() { Truncate(); }
 
@@ -157,8 +136,9 @@ class FileState {
   int refs_ GUARDED_BY(refs_mutex_);
 
   mutable port::Mutex blocks_mutex_;
-  std::vector<char*> blocks_ GUARDED_BY(blocks_mutex_);
   uint64_t size_ GUARDED_BY(blocks_mutex_);
+  Vefs* vefs_;
+  Inode* inode_;
 };
 
 class SequentialFileImpl : public SequentialFile {
@@ -211,18 +191,58 @@ class RandomAccessFileImpl : public RandomAccessFile {
 
 class WritableFileImpl : public WritableFile {
  public:
-  WritableFileImpl(FileState* file) : file_(file) { file_->Ref(); }
+  WritableFileImpl(FileState* file) : file_(file), pos_(0) { file_->Ref(); }
 
   ~WritableFileImpl() override { file_->Unref(); }
 
-  Status Append(const Slice& data) override { return file_->Append(data); }
+  Status Append(const Slice& data) override {
+    size_t write_size = data.size();
+    const char* write_data = data.data();
 
-  Status Close() override { return Status::OK(); }
-  Status Flush() override { return Status::OK(); }
-  Status Sync() override { return Status::OK(); }
+    // Fit as much as possible into buffer.
+    size_t copy_size = std::min(write_size, kWritableFileBufferSize - pos_);
+    std::memcpy(buf_ + pos_, write_data, copy_size);
+    write_data += copy_size;
+    write_size -= copy_size;
+    pos_ += copy_size;
+    if (write_size == 0) {
+      return Status::OK();
+    }
+
+    // Can't fit in buffer, so need to do at least one write.
+    Status status = FlushBuffer();
+    if (!status.ok()) {
+      return status;
+    }
+
+    // Small writes go to buffer, large writes are written directly.
+    if (write_size < kWritableFileBufferSize) {
+      std::memcpy(buf_, write_data, write_size);
+      pos_ = write_size;
+      return Status::OK();
+    }
+    return WriteUnbuffered(write_data, write_size);
+  }
+
+  Status Close() override { return FlushBuffer(); }
+  Status Flush() override { return FlushBuffer(); }
+  Status Sync() override {
+    file_->Sync();
+    return Status::OK();
+  }
 
  private:
+  Status FlushBuffer() {
+    Status status = WriteUnbuffered(buf_, pos_);
+    pos_ = 0;
+    return status;
+  }
+  Status WriteUnbuffered(const char* data, size_t size) {
+    return file_->AppendSub(data, size);
+  }
   FileState* file_;
+  char buf_[kWritableFileBufferSize];
+  size_t pos_;
 };
 
 class NoOpLogger : public Logger {
@@ -230,11 +250,11 @@ class NoOpLogger : public Logger {
   void Logv(const char* format, va_list ap) override {}
 };
 
-class InMemoryEnv : public EnvWrapper {
+class VeEnv : public EnvWrapper {
  public:
-  explicit InMemoryEnv(Env* base_env) : EnvWrapper(base_env) {}
+  explicit VeEnv(Env* base_env) : EnvWrapper(base_env) {}
 
-  ~InMemoryEnv() override {
+  ~VeEnv() override {
     for (const auto& kvp : file_map_) {
       kvp.second->Unref();
     }
@@ -273,7 +293,7 @@ class InMemoryEnv : public EnvWrapper {
     FileState* file;
     if (it == file_map_.end()) {
       // File is not currently open.
-      file = new FileState();
+      file = new FileState(fname);
       file->Ref();
       file_map_[fname] = file;
     } else {
@@ -291,7 +311,7 @@ class InMemoryEnv : public EnvWrapper {
     FileState** sptr = &file_map_[fname];
     FileState* file = *sptr;
     if (file == nullptr) {
-      file = new FileState();
+      file = new FileState(fname);
       file->Ref();
     }
     *result = new WritableFileImpl(file);
@@ -397,6 +417,6 @@ class InMemoryEnv : public EnvWrapper {
 
 }  // namespace
 
-Env* NewMemEnv(Env* base_env) { return new InMemoryEnv(base_env); }
+Env* NewVeEnv(Env* base_env) { return new VeEnv(base_env); }
 
 }  // namespace leveldb

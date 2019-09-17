@@ -6,6 +6,7 @@
 #define STORAGE_LEVELDB_UTIL_TESTUTIL_H_
 
 #include "helpers/memenv/memenv.h"
+#include "helpers/veenv/veenv.h"
 #include "leveldb/env.h"
 #include "leveldb/slice.h"
 #include "util/random.h"

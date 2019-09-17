@@ -35,6 +35,13 @@
 #include "util/env_posix_test_helper.h"
 #include "util/posix_logger.h"
 
+static inline uint64_t ve_get() {
+  uint64_t ret;
+  void* vehva = ((void*)0x000000001000);
+  asm volatile("lhm.l %0,0(%1)" : "=r"(ret) : "r"(vehva));
+  return ((uint64_t)1000 * ret) / 800;
+}
+extern uint64_t taken_time, tmp_var;
 namespace leveldb {
 
 namespace {
@@ -113,6 +120,7 @@ class PosixSequentialFile final : public SequentialFile {
 
   Status Read(size_t n, Slice* result, char* scratch) override {
     Status status;
+    uint64_t t = ve_get();
     while (true) {
       ::ssize_t read_size = ::read(fd_, scratch, n);
       if (read_size < 0) {  // Read error.
@@ -125,6 +133,7 @@ class PosixSequentialFile final : public SequentialFile {
       *result = Slice(scratch, read_size);
       break;
     }
+    taken_time += ve_get() - t;
     return status;
   }
 
@@ -181,7 +190,9 @@ class PosixRandomAccessFile final : public RandomAccessFile {
     assert(fd != -1);
 
     Status status;
+    uint64_t t = ve_get();
     ssize_t read_size = ::pread(fd, scratch, n, static_cast<off_t>(offset));
+    taken_time += ve_get() - t;
     *result = Slice(scratch, (read_size < 0) ? 0 : read_size);
     if (read_size < 0) {
       // An error: return a non-ok status.
@@ -263,6 +274,7 @@ class PosixWritableFile final : public WritableFile {
   }
 
   Status Append(const Slice& data) override {
+    tmp_var++;
     size_t write_size = data.size();
     const char* write_data = data.data();
 
@@ -331,7 +343,9 @@ class PosixWritableFile final : public WritableFile {
 
   Status WriteUnbuffered(const char* data, size_t size) {
     while (size > 0) {
+      uint64_t t = ve_get();
       ssize_t write_result = ::write(fd_, data, size);
+      taken_time += ve_get() - t;
       if (write_result < 0) {
         if (errno == EINTR) {
           continue;  // Retry
@@ -367,6 +381,7 @@ class PosixWritableFile final : public WritableFile {
   // The path argument is only used to populate the description string in the
   // returned Status if an error occurs.
   static Status SyncFd(int fd, const std::string& fd_path) {
+    tmp_var += 1000000;
 #if HAVE_FULLFSYNC
     // On macOS and iOS, fsync() doesn't guarantee durability past power
     // failures. fcntl(F_FULLFSYNC) is required for that purpose. Some
@@ -377,11 +392,13 @@ class PosixWritableFile final : public WritableFile {
     }
 #endif  // HAVE_FULLFSYNC
 
+    uint64_t t = ve_get();
 #if HAVE_FDATASYNC
     bool sync_success = ::fdatasync(fd) == 0;
 #else
     bool sync_success = ::fsync(fd) == 0;
 #endif  // HAVE_FDATASYNC
+    taken_time += ve_get() - t;
 
     if (sync_success) {
       return Status::OK();
