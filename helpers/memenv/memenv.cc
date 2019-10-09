@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#include "helpers/memenv/memenv.h"
-
 #include <string.h>
 
 #include <limits>
@@ -90,7 +88,6 @@ class FileState {
       return Status::OK();
     }
 
-    uint64_t t = ve_get();
     assert(offset / kBlockSize <= std::numeric_limits<size_t>::max());
     size_t block = static_cast<size_t>(offset / kBlockSize);
     size_t block_offset = offset % kBlockSize;
@@ -109,7 +106,6 @@ class FileState {
       block++;
       block_offset = 0;
     }
-    taken_time += ve_get() - t;
 
     *result = Slice(scratch, n);
     return Status::OK();
@@ -120,7 +116,6 @@ class FileState {
     size_t src_len = data.size();
 
     MutexLock lock(&blocks_mutex_);
-    uint64_t t = ve_get();
     while (src_len > 0) {
       size_t avail;
       size_t offset = size_ % kBlockSize;
@@ -142,7 +137,6 @@ class FileState {
       src += avail;
       size_ += avail;
     }
-    taken_time += ve_get() - t;
 
     return Status::OK();
   }

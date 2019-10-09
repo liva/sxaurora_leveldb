@@ -117,6 +117,13 @@ static int FLAGS_vefs = false;
 // If true, use memenv
 static int FLAGS_mem = false;
 
+static inline uint64_t ve_get() {
+  uint64_t ret;
+  void* vehva = ((void*)0x000000001000);
+  asm volatile("lhm.l %0,0(%1)" : "=r"(ret) : "r"(vehva));
+  return ((uint64_t)1000 * ret) / 800;
+}
+extern uint64_t tmp_var;
 namespace leveldb {
 
 namespace {
@@ -138,7 +145,7 @@ class RandomGenerator {
     while (data_.size() < 1048576) {
       // Add a short fragment that is as compressible as specified
       // by FLAGS_compression_ratio.
-      test::CompressibleString(&rnd, FLAGS_compression_ratio, 100, &piece);
+      test::CompressibleString(&rnd, FLAGS_compression_ratio, 128, &piece);
       data_.append(piece);
     }
     pos_ = 0;
@@ -925,7 +932,7 @@ int main(int argc, char** argv) {
   cpu_set_t mask;
   CPU_ZERO(&mask);
   CPU_SET(0, &mask);
-  sched_setaffinity(0, sizeof(mask), &mask);
+  // sched_setaffinity(0, sizeof(mask), &mask);
 
   FLAGS_write_buffer_size = leveldb::Options().write_buffer_size;
   FLAGS_max_file_size = leveldb::Options().max_file_size;

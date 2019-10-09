@@ -36,6 +36,13 @@
 #include "util/logging.h"
 #include "util/mutexlock.h"
 
+static inline uint64_t ve_get() {
+  uint64_t ret;
+  void* vehva = ((void*)0x000000001000);
+  asm volatile("lhm.l %0,0(%1)" : "=r"(ret) : "r"(vehva));
+  return ((uint64_t)1000 * ret) / 800;
+}
+extern uint64_t taken_time;
 namespace leveldb {
 
 const int kNumNonTableCacheFiles = 10;

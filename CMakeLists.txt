@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.9)
 project(leveldb VERSION 1.22.0 LANGUAGES C CXX)
 
 add_link_options(-static)
-link_libraries(-lvefs)
+link_libraries(-lvefs -lunvme -lsysve)
 
 # This project can use C11, but will gracefully decay down to C89.
 set(CMAKE_C_STANDARD 11)
@@ -233,13 +233,11 @@ endif (WIN32)
 target_sources(leveldb
   PRIVATE
     "${PROJECT_SOURCE_DIR}/helpers/memenv/memenv.cc"
-    "${PROJECT_SOURCE_DIR}/helpers/memenv/memenv.h"
 )
 
 target_sources(leveldb
   PRIVATE
     "${PROJECT_SOURCE_DIR}/helpers/veenv/veenv.cc"
-    "${PROJECT_SOURCE_DIR}/helpers/veenv/veenv.h"
 )
 
 target_include_directories(leveldb

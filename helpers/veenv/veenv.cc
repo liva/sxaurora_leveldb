@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#include "helpers/veenv/veenv.h"
-
 #include <string.h>
 
 #include <limits>
@@ -35,55 +33,31 @@ constexpr const size_t kWritableFileBufferSize = 65536;
 
 class FileState {
  public:
-  // FileStates are reference counted. The initial reference count is zero
-  // and the caller must call Ref() at least once.
-  // FileState() : refs_(0), size_(0), vefs_(Vefs::Get()) {}
   FileState() = delete;
-  FileState(const std::string& fn) : refs_(0), vefs_(Vefs::Get()) {
+  FileState(const std::string& fn) : vefs_(Vefs::Get()) {
     inode_ = vefs_->Create(fn, false);
     size_ = vefs_->GetLen(inode_);
   }
+  ~FileState() {}
 
   // No copying allowed.
   FileState(const FileState&) = delete;
   FileState& operator=(const FileState&) = delete;
 
-  // Increase the reference count.
-  void Ref() {
-    MutexLock lock(&refs_mutex_);
-    ++refs_;
-  }
-
-  // Decrease the reference count. Delete if this is the last reference.
-  void Unref() {
-    bool do_delete = false;
-
-    {
-      MutexLock lock(&refs_mutex_);
-      --refs_;
-      assert(refs_ >= 0);
-      if (refs_ <= 0) {
-        do_delete = true;
-      }
-    }
-
-    if (do_delete) {
-      vefs_->Delete(inode_);
-      delete this;
-    }
-  }
-
   uint64_t Size() const {
+    assert(inode_ != nullptr);
     MutexLock lock(&blocks_mutex_);
     return size_;
   }
 
   void Truncate() {
+    assert(inode_ != nullptr);
     MutexLock lock(&blocks_mutex_);
     vefs_->Truncate(inode_, 0);
   }
 
   Status Read(uint64_t offset, size_t n, Slice* result, char* scratch) const {
+    assert(inode_ != nullptr);
     MutexLock lock(&blocks_mutex_);
     if (offset > size_) {
       return Status::IOError("Offset greater than file size.");
@@ -97,11 +71,9 @@ class FileState {
       return Status::OK();
     }
 
-    uint64_t t = ve_get();
     if (vefs_->Read(inode_, offset, n, scratch) != Vefs::Status::kOk) {
       return Status::IOError("Error in VeFS");
     }
-    taken_time += ve_get() - t;
 
     *result = Slice(scratch, n);
     return Status::OK();
@@ -115,12 +87,11 @@ class FileState {
   }
 
   Status AppendSub(const char* buf, size_t len) {
+    assert(inode_ != nullptr);
     MutexLock lock(&blocks_mutex_);
-    uint64_t t = ve_get();
     if (vefs_->Append(inode_, buf, len) != Vefs::Status::kOk) {
       return Status::IOError("Error in VeFS");
     }
-    taken_time += ve_get() - t;
     size_ += len;
 
     return Status::OK();
@@ -128,13 +99,14 @@ class FileState {
 
   void Sync() { vefs_->Sync(inode_); }
 
+  void Delete() {
+    vefs_->Delete(inode_);
+    inode_ = nullptr;
+  }
+
+  void Rename(const std::string& fname) { vefs_->Rename(inode_, fname); }
+
  private:
-  // Private since only Unref() should be used to delete it.
-  ~FileState() { Truncate(); }
-
-  port::Mutex refs_mutex_;
-  int refs_ GUARDED_BY(refs_mutex_);
-
   mutable port::Mutex blocks_mutex_;
   uint64_t size_ GUARDED_BY(blocks_mutex_);
   Vefs* vefs_;
@@ -143,11 +115,9 @@ class FileState {
 
 class SequentialFileImpl : public SequentialFile {
  public:
-  explicit SequentialFileImpl(FileState* file) : file_(file), pos_(0) {
-    file_->Ref();
-  }
+  explicit SequentialFileImpl(FileState* file) : file_(file), pos_(0) {}
 
-  ~SequentialFileImpl() override { file_->Unref(); }
+  ~SequentialFileImpl() override {}
 
   Status Read(size_t n, Slice* result, char* scratch) override {
     Status s = file_->Read(pos_, n, result, scratch);
@@ -176,9 +146,9 @@ class SequentialFileImpl : public SequentialFile {
 
 class RandomAccessFileImpl : public RandomAccessFile {
  public:
-  explicit RandomAccessFileImpl(FileState* file) : file_(file) { file_->Ref(); }
+  explicit RandomAccessFileImpl(FileState* file) : file_(file) {}
 
-  ~RandomAccessFileImpl() override { file_->Unref(); }
+  ~RandomAccessFileImpl() override {}
 
   Status Read(uint64_t offset, size_t n, Slice* result,
               char* scratch) const override {
@@ -191,97 +161,156 @@ class RandomAccessFileImpl : public RandomAccessFile {
 
 class WritableFileImpl : public WritableFile {
  public:
-  WritableFileImpl(FileState* file) : file_(file), pos_(0) { file_->Ref(); }
+  WritableFileImpl(FileState* file) : file_(file) {}
 
-  ~WritableFileImpl() override { file_->Unref(); }
+  ~WritableFileImpl() override {}
 
-  Status Append(const Slice& data) override {
-    size_t write_size = data.size();
-    const char* write_data = data.data();
+  Status Append(const Slice& data) override { return file_->Append(data); }
 
-    // Fit as much as possible into buffer.
-    size_t copy_size = std::min(write_size, kWritableFileBufferSize - pos_);
-    std::memcpy(buf_ + pos_, write_data, copy_size);
-    write_data += copy_size;
-    write_size -= copy_size;
-    pos_ += copy_size;
-    if (write_size == 0) {
-      return Status::OK();
-    }
-
-    // Can't fit in buffer, so need to do at least one write.
-    Status status = FlushBuffer();
-    if (!status.ok()) {
-      return status;
-    }
-
-    // Small writes go to buffer, large writes are written directly.
-    if (write_size < kWritableFileBufferSize) {
-      std::memcpy(buf_, write_data, write_size);
-      pos_ = write_size;
-      return Status::OK();
-    }
-    return WriteUnbuffered(write_data, write_size);
-  }
-
-  Status Close() override { return FlushBuffer(); }
-  Status Flush() override { return FlushBuffer(); }
+  Status Close() override { return Status::OK(); }
+  Status Flush() override { return Status::OK(); }
   Status Sync() override {
     file_->Sync();
     return Status::OK();
   }
 
  private:
-  Status FlushBuffer() {
-    Status status = WriteUnbuffered(buf_, pos_);
-    pos_ = 0;
-    return status;
-  }
-  Status WriteUnbuffered(const char* data, size_t size) {
-    return file_->AppendSub(data, size);
-  }
   FileState* file_;
-  char buf_[kWritableFileBufferSize];
-  size_t pos_;
 };
 
 class NoOpLogger : public Logger {
  public:
   void Logv(const char* format, va_list ap) override {}
 };
+/*
+class VeLogger final : public Logger {
+ public:
+  explicit VeLogger(std::string fname) { }
 
+  ~PosixLogger() override { }
+
+  void Logv(const char* format, va_list arguments) override {
+    // Record the time as close to the Logv() call as possible.
+    struct ::timeval now_timeval;
+    ::gettimeofday(&now_timeval, nullptr);
+    const std::time_t now_seconds = now_timeval.tv_sec;
+    struct std::tm now_components;
+    ::localtime_r(&now_seconds, &now_components);
+
+    // Record the thread ID.
+    constexpr const int kMaxThreadIdSize = 32;
+    std::ostringstream thread_stream;
+    thread_stream << std::this_thread::get_id();
+    std::string thread_id = thread_stream.str();
+    if (thread_id.size() > kMaxThreadIdSize) {
+      thread_id.resize(kMaxThreadIdSize);
+    }
+
+    // We first attempt to print into a stack-allocated buffer. If this attempt
+    // fails, we make a second attempt with a dynamically allocated buffer.
+    constexpr const int kStackBufferSize = 512;
+    char stack_buffer[kStackBufferSize];
+    static_assert(sizeof(stack_buffer) == static_cast<size_t>(kStackBufferSize),
+                  "sizeof(char) is expected to be 1 in C++");
+
+    int dynamic_buffer_size = 0;  // Computed in the first iteration.
+    for (int iteration = 0; iteration < 2; ++iteration) {
+      const int buffer_size =
+          (iteration == 0) ? kStackBufferSize : dynamic_buffer_size;
+      char* const buffer =
+          (iteration == 0) ? stack_buffer : new char[dynamic_buffer_size];
+
+      // Print the header into the buffer.
+      int buffer_offset = snprintf(
+          buffer, buffer_size, "%04d/%02d/%02d-%02d:%02d:%02d.%06d %s ",
+          now_components.tm_year + 1900, now_components.tm_mon + 1,
+          now_components.tm_mday, now_components.tm_hour, now_components.tm_min,
+          now_components.tm_sec, static_cast<int>(now_timeval.tv_usec),
+          thread_id.c_str());
+
+      // The header can be at most 28 characters (10 date + 15 time +
+      // 3 delimiters) plus the thread ID, which should fit comfortably into the
+      // static buffer.
+      assert(buffer_offset <= 28 + kMaxThreadIdSize);
+      static_assert(28 + kMaxThreadIdSize < kStackBufferSize,
+                    "stack-allocated buffer may not fit the message header");
+      assert(buffer_offset < buffer_size);
+
+      // Print the message into the buffer.
+      std::va_list arguments_copy;
+      va_copy(arguments_copy, arguments);
+      buffer_offset +=
+          std::vsnprintf(buffer + buffer_offset, buffer_size - buffer_offset,
+                         format, arguments_copy);
+      va_end(arguments_copy);
+
+      // The code below may append a newline at the end of the buffer, which
+      // requires an extra character.
+      if (buffer_offset >= buffer_size - 1) {
+        // The message did not fit into the buffer.
+        if (iteration == 0) {
+          // Re-run the loop and use a dynamically-allocated buffer. The buffer
+          // will be large enough for the log message, an extra newline and a
+          // null terminator.
+          dynamic_buffer_size = buffer_offset + 2;
+          continue;
+        }
+
+        // The dynamically-allocated buffer was incorrectly sized. This should
+        // not happen, assuming a correct implementation of (v)snprintf. Fail
+        // in tests, recover by truncating the log message in production.
+        assert(false);
+        buffer_offset = buffer_size - 1;
+      }
+
+      // Add a newline if necessary.
+      if (buffer[buffer_offset - 1] != '\n') {
+        buffer[buffer_offset] = '\n';
+        ++buffer_offset;
+      }
+
+      assert(buffer_offset <= buffer_size);
+      std::fwrite(buffer, 1, buffer_offset, fp_);
+      std::fflush(fp_);
+
+      if (iteration != 0) {
+        delete[] buffer;
+      }
+      break;
+    }
+  }
+
+ private:
+};
+*/
 class VeEnv : public EnvWrapper {
  public:
   explicit VeEnv(Env* base_env) : EnvWrapper(base_env) {}
 
-  ~VeEnv() override {
-    for (const auto& kvp : file_map_) {
-      kvp.second->Unref();
-    }
-  }
+  ~VeEnv() override {}
 
   // Partial implementation of the Env interface.
   Status NewSequentialFile(const std::string& fname,
                            SequentialFile** result) override {
-    MutexLock lock(&mutex_);
-    if (file_map_.find(fname) == file_map_.end()) {
+    FileState* file = GetFileStateIfExist(fname);
+    if (file == nullptr) {
       *result = nullptr;
       return Status::IOError(fname, "File not found");
     }
 
-    *result = new SequentialFileImpl(file_map_[fname]);
+    *result = new SequentialFileImpl(file);
     return Status::OK();
   }
 
   Status NewRandomAccessFile(const std::string& fname,
                              RandomAccessFile** result) override {
-    MutexLock lock(&mutex_);
-    if (file_map_.find(fname) == file_map_.end()) {
+    FileState* file = GetFileStateIfExist(fname);
+    if (file == nullptr) {
       *result = nullptr;
       return Status::IOError(fname, "File not found");
     }
 
-    *result = new RandomAccessFileImpl(file_map_[fname]);
+    *result = new RandomAccessFileImpl(file);
     return Status::OK();
   }
 
@@ -294,7 +323,6 @@ class VeEnv : public EnvWrapper {
     if (it == file_map_.end()) {
       // File is not currently open.
       file = new FileState(fname);
-      file->Ref();
       file_map_[fname] = file;
     } else {
       file = it->second;
@@ -308,51 +336,53 @@ class VeEnv : public EnvWrapper {
   Status NewAppendableFile(const std::string& fname,
                            WritableFile** result) override {
     MutexLock lock(&mutex_);
-    FileState** sptr = &file_map_[fname];
-    FileState* file = *sptr;
-    if (file == nullptr) {
+    FileSystem::iterator it = file_map_.find(fname);
+
+    FileState* file;
+    if (it == file_map_.end()) {
+      // File is not currently open.
       file = new FileState(fname);
-      file->Ref();
+      file_map_[fname] = file;
+    } else {
+      file = it->second;
     }
+
     *result = new WritableFileImpl(file);
     return Status::OK();
   }
 
   bool FileExists(const std::string& fname) override {
-    MutexLock lock(&mutex_);
-    return file_map_.find(fname) != file_map_.end();
+    // printf("fe[%s]\n", fname.c_str());
+    return GetFileStateIfExist(fname) != nullptr;
   }
 
   Status GetChildren(const std::string& dir,
                      std::vector<std::string>* result) override {
-    MutexLock lock(&mutex_);
-    result->clear();
-
-    for (const auto& kvp : file_map_) {
-      const std::string& filename = kvp.first;
-
-      if (filename.size() >= dir.size() + 1 && filename[dir.size()] == '/' &&
-          Slice(filename).starts_with(Slice(dir))) {
-        result->push_back(filename.substr(dir.size() + 1));
-      }
+    if (Vefs::Get()->GetChildren(dir, result) == Vefs::Status::kOk) {
+      return Status::OK();
+    } else {
+      return Status::IOError("error in Vefs");
     }
-
-    return Status::OK();
   }
 
-  void DeleteFileInternal(const std::string& fname)
-      EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
-    if (file_map_.find(fname) == file_map_.end()) {
+  void DeleteFileInternal(const std::string& fname) {
+    MutexLock lock(&mutex_);
+    FileSystem::iterator it = file_map_.find(fname);
+
+    if (it == file_map_.end()) {
       return;
     }
 
-    file_map_[fname]->Unref();
+    FileState* file = it->second;
+    file->Delete();
+
     file_map_.erase(fname);
+    delete file;
   }
 
   Status DeleteFile(const std::string& fname) override {
-    MutexLock lock(&mutex_);
-    if (file_map_.find(fname) == file_map_.end()) {
+    FileState* file = GetFileStateIfExist(fname);
+    if (file == nullptr) {
       return Status::IOError(fname, "File not found");
     }
 
@@ -365,25 +395,32 @@ class VeEnv : public EnvWrapper {
   Status DeleteDir(const std::string& dirname) override { return Status::OK(); }
 
   Status GetFileSize(const std::string& fname, uint64_t* file_size) override {
-    MutexLock lock(&mutex_);
-    if (file_map_.find(fname) == file_map_.end()) {
+    FileState* file = GetFileStateIfExist(fname);
+    if (file == nullptr) {
       return Status::IOError(fname, "File not found");
     }
 
-    *file_size = file_map_[fname]->Size();
+    *file_size = file->Size();
     return Status::OK();
   }
 
   Status RenameFile(const std::string& src,
                     const std::string& target) override {
-    MutexLock lock(&mutex_);
-    if (file_map_.find(src) == file_map_.end()) {
+    FileState* sfile = GetFileStateIfExist(src);
+    if (sfile == nullptr) {
       return Status::IOError(src, "File not found");
     }
+    FileState* tfile = GetFileStateIfExist(target);
+    if (tfile) {
+      DeleteFileInternal(target);
+    }
 
-    DeleteFileInternal(target);
-    file_map_[target] = file_map_[src];
+    MutexLock lock(&mutex_);
+
+    file_map_[target] = sfile;
     file_map_.erase(src);
+    sfile->Rename(target);
+    // printf("rename[%s->%s]\n", src.c_str(), target.c_str());
     return Status::OK();
   }
 
@@ -408,6 +445,25 @@ class VeEnv : public EnvWrapper {
   }
 
  private:
+  FileState* GetFileStateIfExist(const std::string& fname) {
+    MutexLock lock(&mutex_);
+    FileSystem::iterator it = file_map_.find(fname);
+
+    if (it == file_map_.end()) {
+      if (Vefs::Get()->DoesExist(fname)) {
+        // File is not currently open.
+        FileState* file = new FileState(fname);
+        file_map_[fname] = file;
+        return file;
+      } else {
+        // printf("fserror: %s\n", fname.c_str());
+        return nullptr;
+      }
+    } else {
+      return it->second;
+    }
+  }
+
   // Map from filenames to FileState objects, representing a simple file system.
   typedef std::map<std::string, FileState*> FileSystem;
 
