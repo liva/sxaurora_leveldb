@@ -35,6 +35,9 @@
 #include "util/env_posix_test_helper.h"
 #include "util/posix_logger.h"
 
+//#define debug_printf(...) printf(__VA_ARGS__)
+#define debug_printf(...)
+
 static inline uint64_t ve_get() {
   uint64_t ret;
   void* vehva = ((void*)0x000000001000);
@@ -121,6 +124,7 @@ class PosixSequentialFile final : public SequentialFile {
   Status Read(size_t n, Slice* result, char* scratch) override {
     Status status;
     while (true) {
+      auto offset = lseek(fd_, 0, SEEK_CUR);
       ::ssize_t read_size = ::read(fd_, scratch, n);
       if (read_size < 0) {  // Read error.
         if (errno == EINTR) {
@@ -129,6 +133,11 @@ class PosixSequentialFile final : public SequentialFile {
         status = PosixError(filename_, errno);
         break;
       }
+      debug_printf("\nr[%s %lu %lu]\n", filename_.c_str(), offset, read_size);
+      for (size_t i = 0; i < read_size; i++) {
+        debug_printf("%02x", scratch[i]);
+      }
+      debug_printf("\n");
       *result = Slice(scratch, read_size);
       break;
     }
@@ -194,6 +203,11 @@ class PosixRandomAccessFile final : public RandomAccessFile {
       // An error: return a non-ok status.
       status = PosixError(filename_, errno);
     }
+    debug_printf("\nr[%s %lu %lu]\n", filename_.c_str(), offset, read_size);
+    for (size_t i = 0; i < read_size; i++) {
+      debug_printf("%02x", scratch[i]);
+    }
+    debug_printf("\n");
     if (!has_permanent_fd_) {
       // Close the temporary file descriptor opened earlier.
       assert(fd != fd_);
@@ -338,6 +352,7 @@ class PosixWritableFile final : public WritableFile {
 
   Status WriteUnbuffered(const char* data, size_t size) {
     while (size > 0) {
+      auto offset = lseek(fd_, 0, SEEK_CUR);
       ssize_t write_result = ::write(fd_, data, size);
       if (write_result < 0) {
         if (errno == EINTR) {
@@ -345,6 +360,12 @@ class PosixWritableFile final : public WritableFile {
         }
         return PosixError(filename_, errno);
       }
+      debug_printf("\nw[%s %lu %lu]\n", filename_.c_str(), offset,
+                   write_result);
+      for (size_t i = 0; i < write_result; i++) {
+        debug_printf("%02x", ((char*)data)[i]);
+      }
+      debug_printf("\n");
       data += write_result;
       size -= write_result;
     }
@@ -693,7 +714,14 @@ class PosixEnv : public Env {
     return Status::OK();
   }
 
+  class NoOpLogger : public Logger {
+   public:
+    void Logv(const char* format, va_list ap) override {}
+  };
+
   Status NewLogger(const std::string& filename, Logger** result) override {
+    *result = new NoOpLogger;
+    return Status::OK();
     int fd = ::open(filename.c_str(),
                     O_APPEND | O_WRONLY | O_CREAT | kOpenBaseFlags, 0644);
     if (fd < 0) {
