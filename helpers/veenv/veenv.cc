@@ -36,7 +36,6 @@ class FileState {
   FileState() = delete;
   FileState(const std::string& fn) : vefs_(Vefs::Get()) {
     inode_ = vefs_->Create(fn, false);
-    size_ = vefs_->GetLen(inode_);
   }
   ~FileState() {}
 
@@ -47,7 +46,7 @@ class FileState {
   uint64_t Size() const {
     assert(inode_ != nullptr);
     MutexLock lock(&blocks_mutex_);
-    return size_;
+    return vefs_->GetLen(inode_);
   }
 
   void Truncate() {
@@ -59,10 +58,10 @@ class FileState {
   Status Read(uint64_t offset, size_t n, Slice* result, char* scratch) const {
     assert(inode_ != nullptr);
     MutexLock lock(&blocks_mutex_);
-    if (offset > size_) {
+    if (offset > vefs_->GetLen(inode_)) {
       return Status::IOError("Offset greater than file size.");
     }
-    const uint64_t available = size_ - offset;
+    const uint64_t available = vefs_->GetLen(inode_) - offset;
     if (n > available) {
       n = static_cast<size_t>(available);
     }
@@ -92,8 +91,6 @@ class FileState {
     if (vefs_->Append(inode_, buf, len) != Vefs::Status::kOk) {
       return Status::IOError("Error in VeFS");
     }
-    size_ += len;
-
     return Status::OK();
   }
 
@@ -108,7 +105,6 @@ class FileState {
 
  private:
   mutable port::Mutex blocks_mutex_;
-  uint64_t size_ GUARDED_BY(blocks_mutex_);
   Vefs* vefs_;
   Inode* inode_;
 };
@@ -206,12 +202,14 @@ class VeLogger final : public Logger {
       thread_id.resize(kMaxThreadIdSize);
     }
 
-    // We first attempt to print into a stack-allocated buffer. If this attempt
+    // We first attempt to print into a stack-allocated buffer. If this
+attempt
     // fails, we make a second attempt with a dynamically allocated buffer.
     constexpr const int kStackBufferSize = 512;
     char stack_buffer[kStackBufferSize];
-    static_assert(sizeof(stack_buffer) == static_cast<size_t>(kStackBufferSize),
-                  "sizeof(char) is expected to be 1 in C++");
+    static_assert(sizeof(stack_buffer) ==
+static_cast<size_t>(kStackBufferSize), "sizeof(char) is expected to be 1 in
+C++");
 
     int dynamic_buffer_size = 0;  // Computed in the first iteration.
     for (int iteration = 0; iteration < 2; ++iteration) {
@@ -224,12 +222,13 @@ class VeLogger final : public Logger {
       int buffer_offset = snprintf(
           buffer, buffer_size, "%04d/%02d/%02d-%02d:%02d:%02d.%06d %s ",
           now_components.tm_year + 1900, now_components.tm_mon + 1,
-          now_components.tm_mday, now_components.tm_hour, now_components.tm_min,
-          now_components.tm_sec, static_cast<int>(now_timeval.tv_usec),
-          thread_id.c_str());
+          now_components.tm_mday, now_components.tm_hour,
+now_components.tm_min, now_components.tm_sec,
+static_cast<int>(now_timeval.tv_usec), thread_id.c_str());
 
       // The header can be at most 28 characters (10 date + 15 time +
-      // 3 delimiters) plus the thread ID, which should fit comfortably into the
+      // 3 delimiters) plus the thread ID, which should fit comfortably into
+the
       // static buffer.
       assert(buffer_offset <= 28 + kMaxThreadIdSize);
       static_assert(28 + kMaxThreadIdSize < kStackBufferSize,
@@ -249,7 +248,8 @@ class VeLogger final : public Logger {
       if (buffer_offset >= buffer_size - 1) {
         // The message did not fit into the buffer.
         if (iteration == 0) {
-          // Re-run the loop and use a dynamically-allocated buffer. The buffer
+          // Re-run the loop and use a dynamically-allocated buffer. The
+buffer
           // will be large enough for the log message, an extra newline and a
           // null terminator.
           dynamic_buffer_size = buffer_offset + 2;
@@ -326,8 +326,8 @@ class VeEnv : public EnvWrapper {
       file_map_[fname] = file;
     } else {
       file = it->second;
-      file->Truncate();
     }
+    file->Truncate();
 
     *result = new WritableFileImpl(file);
     return Status::OK();
@@ -420,7 +420,6 @@ class VeEnv : public EnvWrapper {
     file_map_[target] = sfile;
     file_map_.erase(src);
     sfile->Rename(target);
-    // printf("rename[%s->%s]\n", src.c_str(), target.c_str());
     return Status::OK();
   }
 
@@ -464,7 +463,8 @@ class VeEnv : public EnvWrapper {
     }
   }
 
-  // Map from filenames to FileState objects, representing a simple file system.
+  // Map from filenames to FileState objects, representing a simple file
+  // system.
   typedef std::map<std::string, FileState*> FileSystem;
 
   port::Mutex mutex_;
