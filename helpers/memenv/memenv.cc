@@ -4,6 +4,7 @@
 
 #include <string.h>
 
+#include <atomic>
 #include <limits>
 #include <map>
 #include <string>
@@ -15,13 +16,96 @@
 #include "port/thread_annotations.h"
 #include "util/mutexlock.h"
 
-static inline uint64_t ve_get() {
-  uint64_t ret;
-  void* vehva = ((void*)0x000000001000);
-  asm volatile("lhm.l %0,0(%1)" : "=r"(ret) : "r"(vehva));
-  return ((uint64_t)1000 * ret) / 800;
+#include "ve.h"
+
+static inline __attribute__((always_inline)) void* ve_memcpy(void* buf1,
+                                                             const void* buf2,
+                                                             size_t n) {
+  char* dst = (char*)buf1;
+  const char* src = (const char*)buf2;
+  int dst_surplus = ((size_t)dst % 8);
+  int src_surplus = ((size_t)src % 8);
+  int dst_preprocess = 8 - dst_surplus;
+
+  if (n < 8) {
+    for (int i = 0; i < n; i++) {
+      dst[i] = src[i];
+    }
+    return buf1;
+  }
+
+  // to align dst
+  for (int i = 0; i < dst_preprocess; i++) {
+    dst[i] = src[i];
+  }
+  dst += dst_preprocess;
+  int src_preprocess = dst_preprocess;
+
+  src -= src_surplus;
+  src_preprocess += src_surplus;
+
+  int diff = dst_surplus - src_surplus;
+  if (diff == 0) {
+    src += 8;
+    src_preprocess -= 8;
+
+    _ve_lvl(256);
+    for (size_t i = 0; i < (n - dst_preprocess) / 256 / 8; i++) {
+      Ve::VrReg buf1(src);
+      buf1.WriteToMem(dst);
+      src += 256 * 8;
+      dst += 256 * 8;
+    }
+
+    {
+      size_t remain = (((n - dst_preprocess) % (256 * 8)) / 8) * 8;
+      _ve_lvl(remain / 8);
+      Ve::VrReg buf1(src);
+      buf1.WriteToMem(dst);
+      src += remain;
+      dst += remain;
+    }
+  } else {
+    if (diff < 0) {
+      diff += 8;
+      src += 8;
+      src_preprocess -= 8;
+    }
+
+    _ve_lvl(256);
+    for (size_t i = 0; i < (n - dst_preprocess) / 256 / 8; i++) {
+      Ve::VrReg buf1(src + 8);
+      Ve::VrReg buf2(src);
+      buf1 <<= diff * 8;
+      buf2 >>= (8 - diff) * 8;
+      buf1 |= buf2;
+      buf1.WriteToMem(dst);
+      src += 256 * 8;
+      dst += 256 * 8;
+    }
+
+    {
+      size_t remain = (((n - dst_preprocess) % (256 * 8)) / 8) * 8;
+      _ve_lvl(remain / 8);
+      Ve::VrReg buf1(src + 8);
+      Ve::VrReg buf2(src);
+      buf1 <<= diff * 8;
+      buf2 >>= (8 - diff) * 8;
+      buf1 |= buf2;
+      buf1.WriteToMem(dst);
+      src += remain;
+      dst += remain;
+    }
+  }
+
+  for (int i = 0; i < (n - dst_preprocess) % 8; i++) {
+    dst[i] = src[src_preprocess + i];
+  }
+
+  return buf1;
 }
-extern uint64_t taken_time;
+
+extern uint64_t taken_time, tmp_var;
 namespace leveldb {
 
 namespace {
@@ -30,7 +114,7 @@ class FileState {
  public:
   // FileStates are reference counted. The initial reference count is zero
   // and the caller must call Ref() at least once.
-  FileState() : refs_(0), size_(0) {}
+  FileState() : refs_(0), size_(0), lock_(0) {}
 
   // No copying allowed.
   FileState(const FileState&) = delete;
@@ -60,23 +144,22 @@ class FileState {
     }
   }
 
-  uint64_t Size() const {
-    MutexLock lock(&blocks_mutex_);
-    return size_;
-  }
+  uint64_t Size() const { return size_; }
 
   void Truncate() {
-    MutexLock lock(&blocks_mutex_);
+    Lock();
     for (char*& block : blocks_) {
       delete[] block;
     }
     blocks_.clear();
     size_ = 0;
+    Unlock();
   }
 
-  Status Read(uint64_t offset, size_t n, Slice* result, char* scratch) const {
-    MutexLock lock(&blocks_mutex_);
+  Status Read(uint64_t offset, size_t n, Slice* result, char* scratch) {
+    Lock();
     if (offset > size_) {
+      Unlock();
       return Status::IOError("Offset greater than file size.");
     }
     const uint64_t available = size_ - offset;
@@ -85,6 +168,7 @@ class FileState {
     }
     if (n == 0) {
       *result = Slice();
+      Unlock();
       return Status::OK();
     }
 
@@ -100,6 +184,7 @@ class FileState {
         avail = bytes_to_copy;
       }
       memcpy(dst, blocks_[block] + block_offset, avail);
+      // printf("%p %p %zu,", dst, blocks_[block] + block_offset, avail);
 
       bytes_to_copy -= avail;
       dst += avail;
@@ -108,6 +193,7 @@ class FileState {
     }
 
     *result = Slice(scratch, n);
+    Unlock();
     return Status::OK();
   }
 
@@ -115,7 +201,7 @@ class FileState {
     const char* src = data.data();
     size_t src_len = data.size();
 
-    MutexLock lock(&blocks_mutex_);
+    Lock();
     while (src_len > 0) {
       size_t avail;
       size_t offset = size_ % kBlockSize;
@@ -137,11 +223,17 @@ class FileState {
       src += avail;
       size_ += avail;
     }
-
+    Unlock();
     return Status::OK();
   }
 
  private:
+  void Lock() {
+    while (lock_.fetch_or(1) != 0) {
+      asm volatile("" ::: "memory");
+    }
+  }
+  void Unlock() { lock_ = 0; }
   enum { kBlockSize = 8 * 1024 };
 
   // Private since only Unref() should be used to delete it.
@@ -150,9 +242,9 @@ class FileState {
   port::Mutex refs_mutex_;
   int refs_ GUARDED_BY(refs_mutex_);
 
-  mutable port::Mutex blocks_mutex_;
-  std::vector<char*> blocks_ GUARDED_BY(blocks_mutex_);
-  uint64_t size_ GUARDED_BY(blocks_mutex_);
+  std::atomic<int> lock_;
+  std::vector<char*> blocks_;
+  uint64_t size_;
 };
 
 class SequentialFileImpl : public SequentialFile {
@@ -382,7 +474,8 @@ class InMemoryEnv : public EnvWrapper {
   }
 
  private:
-  // Map from filenames to FileState objects, representing a simple file system.
+  // Map from filenames to FileState objects, representing a simple file
+  // system.
   typedef std::map<std::string, FileState*> FileSystem;
 
   port::Mutex mutex_;

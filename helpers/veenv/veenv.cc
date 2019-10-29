@@ -16,13 +16,7 @@
 #include "port/thread_annotations.h"
 #include "util/mutexlock.h"
 
-/*static inline uint64_t ve_get() {
-  uint64_t ret;
-  void* vehva = ((void*)0x000000001000);
-  asm volatile("lhm.l %0,0(%1)" : "=r"(ret) : "r"(vehva));
-  return ((uint64_t)1000 * ret) / 800;
-}*/
-
+extern uint64_t t1, t2, t3, t4;
 uint64_t taken_time = 0;
 uint64_t tmp_var = 0;
 namespace leveldb {
@@ -59,6 +53,8 @@ class FileState {
     assert(inode_ != nullptr);
     MutexLock lock(&blocks_mutex_);
     if (offset > vefs_->GetLen(inode_)) {
+      printf("veenv: error\n");
+      fflush(stdout);
       return Status::IOError("Offset greater than file size.");
     }
     const uint64_t available = vefs_->GetLen(inode_) - offset;
@@ -71,6 +67,8 @@ class FileState {
     }
 
     if (vefs_->Read(inode_, offset, n, scratch) != Vefs::Status::kOk) {
+      printf("veenv: error\n");
+      fflush(stdout);
       return Status::IOError("Error in VeFS");
     }
 
@@ -89,6 +87,8 @@ class FileState {
     assert(inode_ != nullptr);
     MutexLock lock(&blocks_mutex_);
     if (vefs_->Append(inode_, buf, len) != Vefs::Status::kOk) {
+      printf("veenv: error\n");
+      fflush(stdout);
       return Status::IOError("Error in VeFS");
     }
     return Status::OK();
@@ -352,7 +352,6 @@ class VeEnv : public EnvWrapper {
   }
 
   bool FileExists(const std::string& fname) override {
-    // printf("fe[%s]\n", fname.c_str());
     return GetFileStateIfExist(fname) != nullptr;
   }
 
@@ -455,7 +454,6 @@ class VeEnv : public EnvWrapper {
         file_map_[fname] = file;
         return file;
       } else {
-        // printf("fserror: %s\n", fname.c_str());
         return nullptr;
       }
     } else {

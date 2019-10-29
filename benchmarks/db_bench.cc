@@ -117,12 +117,6 @@ static int FLAGS_vefs = false;
 // If true, use memenv
 static int FLAGS_mem = false;
 
-static inline uint64_t ve_get() {
-  uint64_t ret;
-  void* vehva = ((void*)0x000000001000);
-  asm volatile("lhm.l %0,0(%1)" : "=r"(ret) : "r"(vehva));
-  return ((uint64_t)1000 * ret) / 800;
-}
 extern uint64_t tmp_var;
 namespace leveldb {
 
@@ -1017,6 +1011,9 @@ int main(int argc, char** argv) {
   extern uint64_t taken_time, tmp_var;
   printf(">> %ld\n", taken_time);
   printf(">> %ld\n", tmp_var);
+
+  extern uint64_t t1, t2, t3, t4;
+  printf(">>>t1 %lu t2 %lu t3 %lu t4 %lu\n", t1, t2, t3, t4);
 
   return 0;
 }

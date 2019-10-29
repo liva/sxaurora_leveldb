@@ -27,6 +27,7 @@
 #include <type_traits>
 #include <utility>
 
+#include <vefs.h>
 #include "leveldb/env.h"
 #include "leveldb/slice.h"
 #include "leveldb/status.h"
@@ -38,12 +39,7 @@
 //#define debug_printf(...) printf(__VA_ARGS__)
 #define debug_printf(...)
 
-static inline uint64_t ve_get() {
-  uint64_t ret;
-  void* vehva = ((void*)0x000000001000);
-  asm volatile("lhm.l %0,0(%1)" : "=r"(ret) : "r"(vehva));
-  return ((uint64_t)1000 * ret) / 800;
-}
+extern uint64_t t1, t2, t3, t4;
 extern uint64_t taken_time, tmp_var;
 namespace leveldb {
 
@@ -53,7 +49,8 @@ namespace {
 int g_open_read_only_file_limit = -1;
 
 // Up to 1000 mmap regions for 64-bit binaries; none for 32-bit.
-constexpr const int kDefaultMmapLimit = (sizeof(void*) >= 8) ? 1000 : 0;
+constexpr const int kDefaultMmapLimit = 0;  //(sizeof(void*) >= 8) ? 1000 : 0;
+                                            // WIP
 
 // Can be set using EnvPosixTestHelper::SetReadOnlyMMapLimit().
 int g_mmap_limit = kDefaultMmapLimit;
@@ -124,8 +121,10 @@ class PosixSequentialFile final : public SequentialFile {
   Status Read(size_t n, Slice* result, char* scratch) override {
     Status status;
     while (true) {
-      auto offset = lseek(fd_, 0, SEEK_CUR);
+      // auto offset = lseek(fd_, 0, SEEK_CUR);
+      uint64_t time1 = ve_gettime_debug();
       ::ssize_t read_size = ::read(fd_, scratch, n);
+      t1 += ve_gettime_debug() - time1;
       if (read_size < 0) {  // Read error.
         if (errno == EINTR) {
           continue;  // Retry
@@ -133,7 +132,7 @@ class PosixSequentialFile final : public SequentialFile {
         status = PosixError(filename_, errno);
         break;
       }
-      debug_printf("\nr[%s %lu %lu]\n", filename_.c_str(), offset, read_size);
+      debug_printf("\nsr[%s %lu %lu]\n", filename_.c_str(), offset, read_size);
       for (size_t i = 0; i < read_size; i++) {
         debug_printf("%02x", scratch[i]);
       }
@@ -197,13 +196,15 @@ class PosixRandomAccessFile final : public RandomAccessFile {
     assert(fd != -1);
 
     Status status;
+    uint64_t time1 = ve_gettime_debug();
     ssize_t read_size = ::pread(fd, scratch, n, static_cast<off_t>(offset));
+    t1 += ve_gettime_debug() - time1;
     *result = Slice(scratch, (read_size < 0) ? 0 : read_size);
     if (read_size < 0) {
       // An error: return a non-ok status.
       status = PosixError(filename_, errno);
     }
-    debug_printf("\nr[%s %lu %lu]\n", filename_.c_str(), offset, read_size);
+    debug_printf("\nrr[%s %lu %lu]\n", filename_.c_str(), offset, read_size);
     for (size_t i = 0; i < read_size; i++) {
       debug_printf("%02x", scratch[i]);
     }
@@ -257,6 +258,7 @@ class PosixMmapReadableFile final : public RandomAccessFile {
     }
 
     *result = Slice(mmap_base_ + offset, n);
+    tmp_var++;
     return Status::OK();
   }
 
@@ -352,8 +354,10 @@ class PosixWritableFile final : public WritableFile {
 
   Status WriteUnbuffered(const char* data, size_t size) {
     while (size > 0) {
-      auto offset = lseek(fd_, 0, SEEK_CUR);
+      // auto offset = lseek(fd_, 0, SEEK_CUR);
+      uint64_t time1 = ve_gettime_debug();
       ssize_t write_result = ::write(fd_, data, size);
+      t2 += ve_gettime_debug() - time1;
       if (write_result < 0) {
         if (errno == EINTR) {
           continue;  // Retry
@@ -395,6 +399,7 @@ class PosixWritableFile final : public WritableFile {
   // The path argument is only used to populate the description string in the
   // returned Status if an error occurs.
   static Status SyncFd(int fd, const std::string& fd_path) {
+    uint64_t time1 = ve_gettime_debug();
 #if HAVE_FULLFSYNC
     // On macOS and iOS, fsync() doesn't guarantee durability past power
     // failures. fcntl(F_FULLFSYNC) is required for that purpose. Some
@@ -411,6 +416,8 @@ class PosixWritableFile final : public WritableFile {
     bool sync_success = ::fsync(fd) == 0;
 #endif  // HAVE_FDATASYNC
 
+    t4++;
+    t3 += ve_gettime_debug() - time1;
     if (sync_success) {
       return Status::OK();
     }
