@@ -39,8 +39,6 @@
 //#define debug_printf(...) printf(__VA_ARGS__)
 #define debug_printf(...)
 
-extern uint64_t t1, t2, t3, t4;
-extern uint64_t taken_time, tmp_var;
 namespace leveldb {
 
 namespace {
@@ -122,9 +120,12 @@ class PosixSequentialFile final : public SequentialFile {
     Status status;
     while (true) {
       // auto offset = lseek(fd_, 0, SEEK_CUR);
-      uint64_t time1 = ve_gettime_debug();
-      ::ssize_t read_size = ::read(fd_, scratch, n);
-      t1 += ve_gettime_debug() - time1;
+      ::ssize_t read_size;
+      {
+        MEASURE_TIME;
+        read_size = ::read(fd_, scratch, n);
+      }
+
       if (read_size < 0) {  // Read error.
         if (errno == EINTR) {
           continue;  // Retry
@@ -196,9 +197,11 @@ class PosixRandomAccessFile final : public RandomAccessFile {
     assert(fd != -1);
 
     Status status;
-    uint64_t time1 = ve_gettime_debug();
-    ssize_t read_size = ::pread(fd, scratch, n, static_cast<off_t>(offset));
-    t1 += ve_gettime_debug() - time1;
+    ssize_t read_size;
+    {
+      MEASURE_TIME;
+      read_size = ::pread(fd, scratch, n, static_cast<off_t>(offset));
+    }
     *result = Slice(scratch, (read_size < 0) ? 0 : read_size);
     if (read_size < 0) {
       // An error: return a non-ok status.
@@ -258,7 +261,6 @@ class PosixMmapReadableFile final : public RandomAccessFile {
     }
 
     *result = Slice(mmap_base_ + offset, n);
-    tmp_var++;
     return Status::OK();
   }
 
@@ -355,9 +357,11 @@ class PosixWritableFile final : public WritableFile {
   Status WriteUnbuffered(const char* data, size_t size) {
     while (size > 0) {
       // auto offset = lseek(fd_, 0, SEEK_CUR);
-      uint64_t time1 = ve_gettime_debug();
-      ssize_t write_result = ::write(fd_, data, size);
-      t2 += ve_gettime_debug() - time1;
+      ssize_t write_result;
+      {
+        MEASURE_TIME;
+        write_result = ::write(fd_, data, size);
+      }
       if (write_result < 0) {
         if (errno == EINTR) {
           continue;  // Retry
@@ -399,7 +403,7 @@ class PosixWritableFile final : public WritableFile {
   // The path argument is only used to populate the description string in the
   // returned Status if an error occurs.
   static Status SyncFd(int fd, const std::string& fd_path) {
-    uint64_t time1 = ve_gettime_debug();
+    MEASURE_TIME;
 #if HAVE_FULLFSYNC
     // On macOS and iOS, fsync() doesn't guarantee durability past power
     // failures. fcntl(F_FULLFSYNC) is required for that purpose. Some
@@ -416,8 +420,6 @@ class PosixWritableFile final : public WritableFile {
     bool sync_success = ::fsync(fd) == 0;
 #endif  // HAVE_FDATASYNC
 
-    t4++;
-    t3 += ve_gettime_debug() - time1;
     if (sync_success) {
       return Status::OK();
     }

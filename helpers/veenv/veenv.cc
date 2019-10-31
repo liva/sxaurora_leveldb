@@ -16,9 +16,6 @@
 #include "port/thread_annotations.h"
 #include "util/mutexlock.h"
 
-extern uint64_t t1, t2, t3, t4;
-uint64_t taken_time = 0;
-uint64_t tmp_var = 0;
 namespace leveldb {
 
 namespace {
@@ -80,10 +77,10 @@ class FileState {
     const char* src = data.data();
     size_t src_len = data.size();
 
-    return AppendSub(src, src_len);
+    return Append(src, src_len);
   }
 
-  Status AppendSub(const char* buf, size_t len) {
+  Status Append(const char* buf, size_t len) {
     assert(inode_ != nullptr);
     MutexLock lock(&blocks_mutex_);
     if (vefs_->Append(inode_, buf, len) != Vefs::Status::kOk) {
@@ -157,21 +154,65 @@ class RandomAccessFileImpl : public RandomAccessFile {
 
 class WritableFileImpl : public WritableFile {
  public:
-  WritableFileImpl(FileState* file) : file_(file) {}
+  WritableFileImpl(FileState* file) : file_(file), pos_(0) {}
 
   ~WritableFileImpl() override {}
 
-  Status Append(const Slice& data) override { return file_->Append(data); }
+  Status Append(const Slice& data) override {
+    size_t write_size = data.size();
+    const char* write_data = data.data();
+    return file_->Append(write_data, write_size);
 
-  Status Close() override { return Status::OK(); }
-  Status Flush() override { return Status::OK(); }
+    // Fit as much as possible into buffer.
+    size_t copy_size = std::min(write_size, kWritableFileBufferSize - pos_);
+    std::memcpy(buf_ + pos_, write_data, copy_size);
+    write_data += copy_size;
+    write_size -= copy_size;
+    pos_ += copy_size;
+    if (write_size == 0) {
+      return Status::OK();
+    }
+
+    // Can't fit in buffer, so need to do at least one write.
+    Status status = FlushBuffer();
+    if (!status.ok()) {
+      return status;
+    }
+
+    // Small writes go to buffer, large writes are written directly.
+    if (write_size < kWritableFileBufferSize) {
+      std::memcpy(buf_, write_data, write_size);
+      pos_ = write_size;
+      return Status::OK();
+    }
+    return WriteUnbuffered(write_data, write_size);
+  }
+
+  Status Close() override { return FlushBuffer(); }
+  Status Flush() override { return FlushBuffer(); }
   Status Sync() override {
+    Status status = FlushBuffer();
+    if (!status.ok()) {
+      return status;
+    }
     file_->Sync();
     return Status::OK();
   }
 
  private:
+  Status FlushBuffer() {
+    return Status::OK();
+    Status status = WriteUnbuffered(buf_, pos_);
+    pos_ = 0;
+    return status;
+  }
+
+  Status WriteUnbuffered(const char* data, size_t size) {
+    return file_->Append(data, size);
+  }
   FileState* file_;
+  char buf_[kWritableFileBufferSize];
+  size_t pos_;
 };
 
 class NoOpLogger : public Logger {

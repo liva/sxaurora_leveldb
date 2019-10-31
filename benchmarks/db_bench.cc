@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <sys/types.h>
 
+#include <vefs.h>
 #include "leveldb/cache.h"
 #include "leveldb/db.h"
 #include "leveldb/env.h"
@@ -117,7 +118,6 @@ static int FLAGS_vefs = false;
 // If true, use memenv
 static int FLAGS_mem = false;
 
-extern uint64_t tmp_var;
 namespace leveldb {
 
 namespace {
@@ -1008,12 +1008,7 @@ int main(int argc, char** argv) {
   if (FLAGS_vefs) {
     delete leveldb::g_env;
   }
-  extern uint64_t taken_time, tmp_var;
-  printf(">> %ld\n", taken_time);
-  printf(">> %ld\n", tmp_var);
 
-  extern uint64_t t1, t2, t3, t4;
-  printf(">>>t1 %lu t2 %lu t3 %lu t4 %lu\n", t1, t2, t3, t4);
-
+  DumpTime();
   return 0;
 }

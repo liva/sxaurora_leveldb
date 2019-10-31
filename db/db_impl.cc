@@ -36,7 +36,6 @@
 #include "util/logging.h"
 #include "util/mutexlock.h"
 
-extern uint64_t taken_time;
 namespace leveldb {
 
 const int kNumNonTableCacheFiles = 10;

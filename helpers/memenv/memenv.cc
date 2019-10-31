@@ -105,7 +105,6 @@ static inline __attribute__((always_inline)) void* ve_memcpy(void* buf1,
   return buf1;
 }
 
-extern uint64_t taken_time, tmp_var;
 namespace leveldb {
 
 namespace {
