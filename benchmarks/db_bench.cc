@@ -476,7 +476,7 @@ class Benchmark {
         method = &Benchmark::WriteRandom;
       } else if (name == Slice("fillsync")) {
         fresh_db = true;
-        num_ /= 1000;
+        //        num_ /= 1000;
         write_options_.sync = true;
         method = &Benchmark::WriteRandom;
       } else if (name == Slice("fill100K")) {
