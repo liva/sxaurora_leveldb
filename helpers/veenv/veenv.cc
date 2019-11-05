@@ -4,6 +4,7 @@
 
 #include <string.h>
 
+#include <atomic>
 #include <limits>
 #include <map>
 #include <string>
@@ -25,7 +26,7 @@ constexpr const size_t kWritableFileBufferSize = 65536;
 class FileState {
  public:
   FileState() = delete;
-  FileState(const std::string& fn) : vefs_(Vefs::Get()) {
+  FileState(const std::string& fn) : vefs_(Vefs::Get()), refs_(0) {
     inode_ = vefs_->Create(fn, false);
   }
   ~FileState() {}
@@ -34,20 +35,35 @@ class FileState {
   FileState(const FileState&) = delete;
   FileState& operator=(const FileState&) = delete;
 
+  void Ref() { assert(refs_.fetch_add(1) >= 0); }
+  void Unref() {
+    int old_refs = refs_.fetch_sub(1);
+    assert(old_refs > 0);
+    if (old_refs == 1) {
+      delete this;
+    }
+  }
+
   uint64_t Size() const {
-    assert(inode_ != nullptr);
+    if (inode_ == nullptr) {
+      return 0;
+    }
     MutexLock lock(&blocks_mutex_);
     return vefs_->GetLen(inode_);
   }
 
   void Truncate() {
-    assert(inode_ != nullptr);
+    if (inode_ == nullptr) {
+      return;
+    }
     MutexLock lock(&blocks_mutex_);
     vefs_->Truncate(inode_, 0);
   }
 
   Status Read(uint64_t offset, size_t n, Slice* result, char* scratch) const {
-    assert(inode_ != nullptr);
+    if (inode_ == nullptr) {
+      return Status::OK();
+    }
     MutexLock lock(&blocks_mutex_);
     if (offset > vefs_->GetLen(inode_)) {
       printf("veenv: error\n");
@@ -81,7 +97,9 @@ class FileState {
   }
 
   Status Append(const char* buf, size_t len) {
-    assert(inode_ != nullptr);
+    if (inode_ == nullptr) {
+      return Status::OK();
+    }
     MutexLock lock(&blocks_mutex_);
     if (vefs_->Append(inode_, buf, len) != Vefs::Status::kOk) {
       printf("veenv: error\n");
@@ -91,26 +109,42 @@ class FileState {
     return Status::OK();
   }
 
-  void Sync() { vefs_->Sync(inode_); }
+  void Sync() {
+    if (inode_ == nullptr) {
+      return;
+    }
+    vefs_->Sync(inode_);
+  }
 
   void Delete() {
+    if (inode_ == nullptr) {
+      return;
+    }
     vefs_->Delete(inode_);
     inode_ = nullptr;
   }
 
-  void Rename(const std::string& fname) { vefs_->Rename(inode_, fname); }
+  void Rename(const std::string& fname) {
+    if (inode_ == nullptr) {
+      return;
+    }
+    vefs_->Rename(inode_, fname);
+  }
 
  private:
   mutable port::Mutex blocks_mutex_;
   Vefs* vefs_;
   Inode* inode_;
+  std::atomic<int> refs_;
 };
 
 class SequentialFileImpl : public SequentialFile {
  public:
-  explicit SequentialFileImpl(FileState* file) : file_(file), pos_(0) {}
+  explicit SequentialFileImpl(FileState* file) : file_(file), pos_(0) {
+    file_->Ref();
+  }
 
-  ~SequentialFileImpl() override {}
+  ~SequentialFileImpl() override { file_->Unref(); }
 
   Status Read(size_t n, Slice* result, char* scratch) override {
     Status s = file_->Read(pos_, n, result, scratch);
@@ -139,9 +173,9 @@ class SequentialFileImpl : public SequentialFile {
 
 class RandomAccessFileImpl : public RandomAccessFile {
  public:
-  explicit RandomAccessFileImpl(FileState* file) : file_(file) {}
+  explicit RandomAccessFileImpl(FileState* file) : file_(file) { file_->Ref(); }
 
-  ~RandomAccessFileImpl() override {}
+  ~RandomAccessFileImpl() override { file_->Unref(); }
 
   Status Read(uint64_t offset, size_t n, Slice* result,
               char* scratch) const override {
@@ -154,9 +188,9 @@ class RandomAccessFileImpl : public RandomAccessFile {
 
 class WritableFileImpl : public WritableFile {
  public:
-  WritableFileImpl(FileState* file) : file_(file), pos_(0) {}
+  WritableFileImpl(FileState* file) : file_(file), pos_(0) { file_->Ref(); }
 
-  ~WritableFileImpl() override {}
+  ~WritableFileImpl() override { file_->Unref(); }
 
   Status Append(const Slice& data) override {
     size_t write_size = data.size();
@@ -328,7 +362,11 @@ class VeEnv : public EnvWrapper {
  public:
   explicit VeEnv(Env* base_env) : EnvWrapper(base_env) {}
 
-  ~VeEnv() override {}
+  ~VeEnv() override {
+    for (const auto& kvp : file_map_) {
+      kvp.second->Unref();
+    }
+  }
 
   // Partial implementation of the Env interface.
   Status NewSequentialFile(const std::string& fname,
@@ -364,6 +402,7 @@ class VeEnv : public EnvWrapper {
     if (it == file_map_.end()) {
       // File is not currently open.
       file = new FileState(fname);
+      file->Ref();
       file_map_[fname] = file;
     } else {
       file = it->second;
@@ -383,6 +422,7 @@ class VeEnv : public EnvWrapper {
     if (it == file_map_.end()) {
       // File is not currently open.
       file = new FileState(fname);
+      file->Ref();
       file_map_[fname] = file;
     } else {
       file = it->second;
@@ -417,7 +457,7 @@ class VeEnv : public EnvWrapper {
     file->Delete();
 
     file_map_.erase(fname);
-    delete file;
+    file->Unref();
   }
 
   Status DeleteFile(const std::string& fname) override {
@@ -492,6 +532,7 @@ class VeEnv : public EnvWrapper {
       if (Vefs::Get()->DoesExist(fname)) {
         // File is not currently open.
         FileState* file = new FileState(fname);
+        file->Ref();
         file_map_[fname] = file;
         return file;
       } else {
