@@ -1,5 +1,6 @@
 #!/bin/sh -xe
-docker run --rm -it -v $PWD:$PWD -w $PWD vefs:develop sh -c 'mkdir -p build && cd build && CC=/opt/nec/nosupport/llvm-ve/bin/clang CXX=/opt/nec/nosupport/llvm-ve/bin/clang++ AR=/opt/nec/nosupport/llvm-ve/bin/llvm-ar CFLAGS="--target=ve-linux" CXXFLAGS="--target=ve-linux" LDFLAGS="--target=ve-linux" cmake3 -DCMAKE_BUILD_TYPE=Release -DCMAKE_VERBOSE_MAKEFILE=ON .. && cmake3 --build . -j12'
+sudo rm -rf build
+docker run --rm -it -v $PWD:$PWD -w $PWD vefs:develop sh -c 'mkdir -p build && cd build && CC=/opt/nec/nosupport/llvm-ve/bin/clang CXX=/opt/nec/nosupport/llvm-ve/bin/clang++ AR=/opt/nec/nosupport/llvm-ve/bin/llvm-ar CFLAGS="--target=ve-linux -g3" CXXFLAGS="--target=ve-linux -g3" LDFLAGS="--target=ve-linux -g3" cmake3 -DCMAKE_BUILD_TYPE=Release -DCMAKE_VERBOSE_MAKEFILE=ON .. && cmake3 --build . -j12'
 
 docker run -d --name leveldb -it -v $PWD:$PWD -w $PWD vefs:develop sh
 #docker exec -it rocksdb mkdir workdir
