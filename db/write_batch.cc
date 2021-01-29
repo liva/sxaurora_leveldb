@@ -20,6 +20,7 @@
 #include "db/write_batch_internal.h"
 #include "leveldb/db.h"
 #include "util/coding.h"
+#include "rtc.h"
 
 namespace leveldb {
 

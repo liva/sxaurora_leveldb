@@ -79,7 +79,7 @@ class FileState {
     if (inode_ == nullptr) {
       return 0;
     }
-    MutexLock lock(&blocks_mutex_);
+    //    MutexLock lock(&blocks_mutex_);
     return vefs_->GetLen(inode_);
   }
 
@@ -87,7 +87,7 @@ class FileState {
     if (inode_ == nullptr) {
       return;
     }
-    MutexLock lock(&blocks_mutex_);
+    //    MutexLock lock(&blocks_mutex_);
     vefs_->Truncate(inode_, 0);
   }
 
@@ -95,7 +95,7 @@ class FileState {
     if (inode_ == nullptr) {
       return Status::OK();
     }
-    MutexLock lock(&blocks_mutex_);
+    //    MutexLock lock(&blocks_mutex_);
     if (offset > vefs_->GetLen(inode_)) {
       printf("veenv: error\n");
       fflush(stdout);
@@ -131,7 +131,7 @@ class FileState {
     if (inode_ == nullptr) {
       return Status::OK();
     }
-    MutexLock lock(&blocks_mutex_);
+    //    MutexLock lock(&blocks_mutex_);
     if (vefs_->Append(inode_, buf, len) != Vefs::Status::kOk) {
       printf("veenv: error\n");
       fflush(stdout);
@@ -163,7 +163,7 @@ class FileState {
   }
 
  private:
-  mutable port::Mutex blocks_mutex_;
+  //  mutable port::Mutex blocks_mutex_;
   Vefs* vefs_;
   Inode* inode_;
   std::atomic<int> refs_;
@@ -226,7 +226,11 @@ class WritableFileImpl : public WritableFile {
   Status Append(const Slice& data) override {
     size_t write_size = data.size();
     const char* write_data = data.data();
-    return file_->Append(write_data, write_size);
+    // TODO should be aligned at 8 if the size is bigger than 32K
+    if (write_size % 4 != 0) {
+      printf("WARNING: not aligned %lu %lu\n", pos_, write_size);
+    }
+    //return file_->Append(write_data, write_size);
 
     // Fit as much as possible into buffer.
     size_t copy_size = std::min(write_size, kWritableFileBufferSize - pos_);
@@ -266,14 +270,18 @@ class WritableFileImpl : public WritableFile {
 
  private:
   Status FlushBuffer() {
-    return Status::OK();
+    //return Status::OK();
     Status status = WriteUnbuffered(buf_, pos_);
     pos_ = 0;
     return status;
   }
 
   Status WriteUnbuffered(const char* data, size_t size) {
-    return file_->Append(data, size);
+    if (size != 0) {
+      return file_->Append(data, size);
+    } else {
+      return Status::OK();
+    }
   }
   FileState* file_;
   char buf_[kWritableFileBufferSize];

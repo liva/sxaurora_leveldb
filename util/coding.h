@@ -26,6 +26,28 @@ void PutVarint32(std::string* dst, uint32_t value);
 void PutVarint64(std::string* dst, uint64_t value);
 void PutLengthPrefixedSlice(std::string* dst, const Slice& value);
 
+  // align
+  inline char *EncodeAlign(char *dst) {
+    uint8_t* ptr = reinterpret_cast<uint8_t*>(dst);
+#ifdef __ve__
+    size_t padding = (4 - (((size_t)dst + 1) % 4)) % 4;
+    *(ptr++) = padding;
+    for(size_t i = 0; i < padding; i++) {
+      *(ptr++) = 0;
+    }
+#endif
+    return reinterpret_cast<char*>(ptr);
+  }
+  inline const char* GetAlignPtr(const char *p) {
+    const uint8_t *ptr = reinterpret_cast<const uint8_t*>(p);
+#ifdef __ve__
+    size_t padding = *ptr;
+    ptr += padding + 1;
+#endif
+    return reinterpret_cast<const char*>(ptr);
+  }
+
+
 // Standard Get... routines parse a value from the beginning of a Slice
 // and advance the slice past the parsed value.
 bool GetVarint32(Slice* input, uint32_t* value);

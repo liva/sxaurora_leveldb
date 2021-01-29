@@ -1,3 +1,4 @@
+#include <iostream>
 /**
  * Copyright 2020 NEC Laboratories Europe GmbH
  * All rights reserved
@@ -49,6 +50,8 @@
 #include "util/mutexlock.h"
 #include "util/random.h"
 #include "util/testutil.h"
+
+#include "rtc.h"
 
 // Comma-separated list of operations to run in the specified order
 //   Actual benchmarks:
@@ -757,7 +760,9 @@ class Benchmark {
     WriteBatch batch;
     Status s;
     int64_t bytes = 0;
+    rtc_init();
     for (int i = 0; i < num_; i += entries_per_batch_) {
+      get_rtctime(t1);
       batch.Clear();
       for (int j = 0; j < entries_per_batch_; j++) {
         const int k = seq ? i + j : (thread->rand.Next() % FLAGS_num);
@@ -772,7 +777,9 @@ class Benchmark {
         fprintf(stderr, "put error: %s\n", s.ToString().c_str());
         exit(1);
       }
+      record_rtctime(t1);
     }
+    rtc_show();
     thread->stats.AddBytes(bytes);
   }
 
@@ -780,11 +787,16 @@ class Benchmark {
     Iterator* iter = db_->NewIterator(ReadOptions());
     int i = 0;
     int64_t bytes = 0;
+    rtc_init();
     for (iter->SeekToFirst(); i < reads_ && iter->Valid(); iter->Next()) {
+      get_rtctime(t1);
       bytes += iter->key().size() + iter->value().size();
       thread->stats.FinishedSingleOp();
+      record_rtctime(t1);
       ++i;
     }
+    
+    rtc_show();
     delete iter;
     thread->stats.AddBytes(bytes);
   }
@@ -806,15 +818,19 @@ class Benchmark {
     ReadOptions options;
     std::string value;
     int found = 0;
+    rtc_init();
     for (int i = 0; i < reads_; i++) {
       char key[100];
+      get_rtctime(t1);
       const int k = thread->rand.Next() % FLAGS_num;
       snprintf(key, sizeof(key), "%016d", k);
       if (db_->Get(options, key, &value).ok()) {
         found++;
       }
       thread->stats.FinishedSingleOp();
+      record_rtctime(t1);
     }
+    rtc_show();
     char msg[100];
     snprintf(msg, sizeof(msg), "(%d of %d found)", found, num_);
     thread->stats.AddMessage(msg);

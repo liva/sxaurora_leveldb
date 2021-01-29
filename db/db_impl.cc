@@ -36,6 +36,10 @@
 #include "util/logging.h"
 #include "util/mutexlock.h"
 
+#include "rtc.h"
+int rtc_index = 0;
+uint64_t rtc_array[3000000];
+uint64_t rtc_total = 0;
 namespace leveldb {
 
 const int kNumNonTableCacheFiles = 10;

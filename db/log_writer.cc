@@ -10,6 +10,7 @@
 #include "util/coding.h"
 #include "util/crc32c.h"
 
+#include "../rtc.h"
 namespace leveldb {
 namespace log {
 
@@ -46,9 +47,9 @@ Status Writer::AddRecord(const Slice& slice) {
     if (leftover < kHeaderSize) {
       // Switch to a new block
       if (leftover > 0) {
-        // Fill the trailer (literal below relies on kHeaderSize being 7)
-        static_assert(kHeaderSize == 7, "");
-        dest_->Append(Slice("\x00\x00\x00\x00\x00\x00", leftover));
+        // Fill the trailer (literal below relies on kHeaderSize being 8)
+        static_assert(kHeaderSize == 8, "");
+        dest_->Append(Slice("\x00\x00\x00\x00\x00\x00\x00", leftover));
       }
       block_offset_ = 0;
     }
@@ -88,7 +89,7 @@ Status Writer::EmitPhysicalRecord(RecordType t, const char* ptr,
   char buf[kHeaderSize];
   buf[4] = static_cast<char>(length & 0xff);
   buf[5] = static_cast<char>(length >> 8);
-  buf[6] = static_cast<char>(t);
+  buf[7] = static_cast<char>(t);
 
   // Compute the crc of the record type and the payload.
   uint32_t crc = crc32c::Extend(type_crc_[t], ptr, length);

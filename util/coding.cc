@@ -71,6 +71,14 @@ void PutVarint64(std::string* dst, uint64_t v) {
 
 void PutLengthPrefixedSlice(std::string* dst, const Slice& value) {
   PutVarint32(dst, value.size());
+#ifdef __ve__
+  // architecture specific alignment
+  if (value.size() > 32) {
+    size_t padding = (4 - ((dst->length() + 1) % 4)) % 4;
+    dst->append(1, padding);
+    dst->append(padding, 0);
+  }
+#endif /* __ve__ */
   dst->append(value.data(), value.size());
 }
 
@@ -144,23 +152,36 @@ bool GetVarint64(Slice* input, uint64_t* value) {
 
 const char* GetLengthPrefixedSlice(const char* p, const char* limit,
                                    Slice* result) {
-  uint32_t len;
+  uint32_t len, padding = 0;
   p = GetVarint32Ptr(p, limit, &len);
   if (p == nullptr) return nullptr;
+#ifdef __ve__
+  if (len > 32) {
+    padding = *p;
+    p += padding + 1;
+  }
+#endif /* __ve__ */
   if (p + len > limit) return nullptr;
   *result = Slice(p, len);
   return p + len;
 }
 
 bool GetLengthPrefixedSlice(Slice* input, Slice* result) {
-  uint32_t len;
-  if (GetVarint32(input, &len) && input->size() >= len) {
-    *result = Slice(input->data(), len);
-    input->remove_prefix(len);
-    return true;
-  } else {
-    return false;
+  uint32_t len, padding;
+  if (GetVarint32(input, &len)) {
+#ifdef __ve__
+    if (len > 32) {
+      padding = *(input->data());
+      input->remove_prefix(1 + padding);
+    }
+#endif /* __ve__ */
+    if (input->size() >= len) {
+      *result = Slice(input->data(), len);
+      input->remove_prefix(len);
+      return true;
+    }
   }
+  return false;
 }
 
 }  // namespace leveldb

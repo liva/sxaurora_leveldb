@@ -20,7 +20,8 @@ enum Tag {
   kDeletedFile = 6,
   kNewFile = 7,
   // 8 was used for large value refs
-  kPrevLogNumber = 9
+  kPrevLogNumber = 9,
+  kDummy = 10,
 };
 
 void VersionEdit::Clear() {
@@ -80,6 +81,11 @@ void VersionEdit::EncodeTo(std::string* dst) const {
     PutVarint64(dst, f.file_size);
     PutLengthPrefixedSlice(dst, f.smallest.Encode());
     PutLengthPrefixedSlice(dst, f.largest.Encode());
+  }
+
+  const int gap_size = (4 - dst->length() % 4) % 4;
+  for(int i = 0; i < gap_size; i++) {
+    PutVarint32(dst, kDummy);
   }
 }
 
@@ -184,7 +190,8 @@ Status VersionEdit::DecodeFrom(const Slice& src) {
           msg = "new-file entry";
         }
         break;
-
+    case kDummy:
+      break;
       default:
         msg = "unknown tag";
         break;

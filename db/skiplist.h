@@ -33,6 +33,11 @@
 
 #include "util/arena.h"
 #include "util/random.h"
+#include "../rtc.h"
+
+#ifdef VECTOR_MEMTABLE
+#include "vector.h"
+#else
 
 namespace leveldb {
 
@@ -378,5 +383,6 @@ bool SkipList<Key, Comparator>::Contains(const Key& key) const {
 }
 
 }  // namespace leveldb
+#endif // VECTOR_MEMTABLE
 
 #endif  // STORAGE_LEVELDB_DB_SKIPLIST_H_
