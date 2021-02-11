@@ -32,6 +32,14 @@ Writer::Writer(WritableFile* dest, uint64_t dest_length)
 
 Writer::~Writer() = default;
 
+  static size_t align4(size_t len) {
+    return (len / 4) * 4;
+  }
+
+  static size_t alignup4(size_t len) {
+    return ((len + 3) / 4) * 4;
+  }
+
 Status Writer::AddRecord(const Slice& slice) {
   const char* ptr = slice.data();
   size_t left = slice.size();
@@ -57,7 +65,7 @@ Status Writer::AddRecord(const Slice& slice) {
     // Invariant: we never leave < kHeaderSize bytes in a block.
     assert(kBlockSize - block_offset_ - kHeaderSize >= 0);
 
-    const size_t avail = kBlockSize - block_offset_ - kHeaderSize;
+    const size_t avail = align4(kBlockSize - block_offset_ - kHeaderSize);
     const size_t fragment_length = (left < avail) ? left : avail;
 
     RecordType type;
@@ -83,12 +91,14 @@ Status Writer::AddRecord(const Slice& slice) {
 Status Writer::EmitPhysicalRecord(RecordType t, const char* ptr,
                                   size_t length) {
   assert(length <= 0xffff);  // Must fit in two bytes
-  assert(block_offset_ + kHeaderSize + length <= kBlockSize);
+  assert(block_offset_ + kHeaderSize + alignup4(length) <= kBlockSize);
+  const size_t padding = alignup4(length) - length;
 
   // Format the header
   char buf[kHeaderSize];
   buf[4] = static_cast<char>(length & 0xff);
   buf[5] = static_cast<char>(length >> 8);
+  buf[6] = padding;
   buf[7] = static_cast<char>(t);
 
   // Compute the crc of the record type and the payload.
@@ -101,10 +111,14 @@ Status Writer::EmitPhysicalRecord(RecordType t, const char* ptr,
   if (s.ok()) {
     s = dest_->Append(Slice(ptr, length));
     if (s.ok()) {
+      if (padding > 0) {
+        char tmp[padding];
+        dest_->Append(Slice(tmp, padding));
+      }
       s = dest_->Flush();
     }
   }
-  block_offset_ += kHeaderSize + length;
+  block_offset_ += kHeaderSize + length + padding;
   return s;
 }
 

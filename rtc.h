@@ -14,7 +14,7 @@ static inline uint64_t ve_get_rtc() {
   return ((uint64_t)1000 * ret) / 800;
 }
 
-#define RTC
+//#define RTC
 #ifdef RTC
 #define get_rtctime(x) uint64_t x = ve_get_rtc();
 #define record_rtctime(x) rtc_array[rtc_index] = ve_get_rtc() - x; rtc_index++;

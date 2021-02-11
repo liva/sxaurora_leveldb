@@ -26,7 +26,7 @@ static const int kMaxRecordType = kLastType;
 
 static const int kBlockSize = 32768;
 
-// Header is checksum (4 bytes), length (2 bytes), reserved (1 byte), type (1 byte).
+// Header is checksum (4 bytes), length (2 bytes), padding (1 byte), type (1 byte).
 static const int kHeaderSize = 4 + 2 + 1 + 1;
 
 }  // namespace log

@@ -217,9 +217,10 @@ unsigned int Reader::ReadPhysicalRecord(Slice* result) {
     const char* header = buffer_.data();
     const uint32_t a = static_cast<uint32_t>(header[4]) & 0xff;
     const uint32_t b = static_cast<uint32_t>(header[5]) & 0xff;
+    const uint32_t padding = header[6];
     const unsigned int type = header[7];
     const uint32_t length = a | (b << 8);
-    if (kHeaderSize + length > buffer_.size()) {
+    if (kHeaderSize + length + padding > buffer_.size()) {
       size_t drop_size = buffer_.size();
       buffer_.clear();
       if (!eof_) {
@@ -256,10 +257,10 @@ unsigned int Reader::ReadPhysicalRecord(Slice* result) {
       }
     }
 
-    buffer_.remove_prefix(kHeaderSize + length);
+    buffer_.remove_prefix(kHeaderSize + length + padding);
 
     // Skip physical record that started before initial_offset_
-    if (end_of_buffer_offset_ - buffer_.size() - kHeaderSize - length <
+    if (end_of_buffer_offset_ - buffer_.size() - kHeaderSize - length - padding <
         initial_offset_) {
       result->clear();
       return kBadRecord;

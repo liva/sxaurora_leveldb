@@ -1,4 +1,3 @@
-#include <iostream>
 /**
  * Copyright 2020 NEC Laboratories Europe GmbH
  * All rights reserved
