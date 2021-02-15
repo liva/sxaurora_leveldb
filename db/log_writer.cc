@@ -55,9 +55,15 @@ Status Writer::AddRecord(const Slice& slice) {
     if (leftover < kHeaderSize) {
       // Switch to a new block
       if (leftover > 0) {
+#ifndef VE_OPT
+        // Fill the trailer (literal below relies on kHeaderSize being 7)
+        static_assert(kHeaderSize == 7, "");
+        dest_->Append(Slice("\x00\x00\x00\x00\x00\x00", leftover));
+#else
         // Fill the trailer (literal below relies on kHeaderSize being 8)
         static_assert(kHeaderSize == 8, "");
         dest_->Append(Slice("\x00\x00\x00\x00\x00\x00\x00", leftover));
+#endif
       }
       block_offset_ = 0;
     }
@@ -65,7 +71,11 @@ Status Writer::AddRecord(const Slice& slice) {
     // Invariant: we never leave < kHeaderSize bytes in a block.
     assert(kBlockSize - block_offset_ - kHeaderSize >= 0);
 
+#ifndef VE_OPT
+    const size_t avail = kBlockSize - block_offset_ - kHeaderSize;
+#else
     const size_t avail = align4(kBlockSize - block_offset_ - kHeaderSize);
+#endif
     const size_t fragment_length = (left < avail) ? left : avail;
 
     RecordType type;
@@ -91,15 +101,23 @@ Status Writer::AddRecord(const Slice& slice) {
 Status Writer::EmitPhysicalRecord(RecordType t, const char* ptr,
                                   size_t length) {
   assert(length <= 0xffff);  // Must fit in two bytes
+#ifndef VE_OPT
+  assert(block_offset_ + kHeaderSize + length <= kBlockSize);
+#else
   assert(block_offset_ + kHeaderSize + alignup4(length) <= kBlockSize);
   const size_t padding = alignup4(length) - length;
+#endif
 
   // Format the header
   char buf[kHeaderSize];
   buf[4] = static_cast<char>(length & 0xff);
   buf[5] = static_cast<char>(length >> 8);
+#ifndef VE_OPT
+  buf[6] = static_cast<char>(t);
+#else
   buf[6] = padding;
   buf[7] = static_cast<char>(t);
+#endif
 
   // Compute the crc of the record type and the payload.
   uint32_t crc = crc32c::Extend(type_crc_[t], ptr, length);
@@ -111,14 +129,21 @@ Status Writer::EmitPhysicalRecord(RecordType t, const char* ptr,
   if (s.ok()) {
     s = dest_->Append(Slice(ptr, length));
     if (s.ok()) {
+#ifndef VE_OPT
+#else
       if (padding > 0) {
         char tmp[padding];
         dest_->Append(Slice(tmp, padding));
       }
+#endif
       s = dest_->Flush();
     }
   }
+#ifndef VE_OPT
+  block_offset_ += kHeaderSize + length;
+#else
   block_offset_ += kHeaderSize + length + padding;
+#endif
   return s;
 }
 

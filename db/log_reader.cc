@@ -217,10 +217,18 @@ unsigned int Reader::ReadPhysicalRecord(Slice* result) {
     const char* header = buffer_.data();
     const uint32_t a = static_cast<uint32_t>(header[4]) & 0xff;
     const uint32_t b = static_cast<uint32_t>(header[5]) & 0xff;
+#ifndef VE_OPT
+    const unsigned int type = header[6];
+#else
     const uint32_t padding = header[6];
     const unsigned int type = header[7];
+#endif
     const uint32_t length = a | (b << 8);
+#ifndef VE_OPT
+    if (kHeaderSize + length > buffer_.size()) {
+#else
     if (kHeaderSize + length + padding > buffer_.size()) {
+#endif
       size_t drop_size = buffer_.size();
       buffer_.clear();
       if (!eof_) {
@@ -244,7 +252,11 @@ unsigned int Reader::ReadPhysicalRecord(Slice* result) {
     // Check crc
     if (checksum_) {
       uint32_t expected_crc = crc32c::Unmask(DecodeFixed32(header));
+#ifndef VE_OPT
+      uint32_t actual_crc = crc32c::Value(header + 6, 1 + length);
+#else
       uint32_t actual_crc = crc32c::Value(header + 7, 1 + length);
+#endif
       if (actual_crc != expected_crc) {
         // Drop the rest of the buffer since "length" itself may have
         // been corrupted and if we trust it, we could find some
@@ -257,10 +269,18 @@ unsigned int Reader::ReadPhysicalRecord(Slice* result) {
       }
     }
 
+#ifndef VE_OPT
+    buffer_.remove_prefix(kHeaderSize + length);
+#else
     buffer_.remove_prefix(kHeaderSize + length + padding);
+#endif
 
     // Skip physical record that started before initial_offset_
+#ifndef VE_OPT
+    if (end_of_buffer_offset_ - buffer_.size() - kHeaderSize - length <
+#else
     if (end_of_buffer_offset_ - buffer_.size() - kHeaderSize - length - padding <
+#endif
         initial_offset_) {
       result->clear();
       return kBadRecord;

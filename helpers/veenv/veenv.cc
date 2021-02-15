@@ -226,10 +226,12 @@ class WritableFileImpl : public WritableFile {
   Status Append(const Slice& data) override {
     size_t write_size = data.size();
     const char* write_data = data.data();
+#ifdef VE_OPT
     // TODO should be aligned at 8 if the size is bigger than 32K
     if (write_size > 256 && (pos_) % 4 != 0) {
       printf("WARNING: not aligned. pos: %lu wsize: %lu\n", pos_, write_size);
     }
+#endif
     //return file_->Append(write_data, write_size);
 
     // Fit as much as possible into buffer.
