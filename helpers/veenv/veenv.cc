@@ -249,7 +249,9 @@ class WritableFileImpl : public WritableFile {
 #ifdef VE_OPT
     // TODO should be aligned at 8 if the size is bigger than 32K
     if (write_size > 256 && (pos_) % 4 != 0) {
+#ifdef VE_DEBUG
       printf("WARNING: not aligned. pos: %lu wsize: %lu\n", pos_, write_size);
+#endif
     }
 #else
     return file_->Append(write_data, write_size);
