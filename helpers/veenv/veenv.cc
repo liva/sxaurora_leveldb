@@ -47,6 +47,7 @@
 #include "port/port.h"
 #include "port/thread_annotations.h"
 #include "util/mutexlock.h"
+#include "../../rtc.h"
 
 namespace leveldb {
 
@@ -60,7 +61,8 @@ class FileState {
   FileState(const std::string& fn) : vefs_(Vefs::Get()), refs_(0) {
     inode_ = vefs_->Create(fn, false);
   }
-  ~FileState() {}
+  ~FileState() {
+  }
 
   // No copying allowed.
   FileState(const FileState&) = delete;
@@ -147,6 +149,14 @@ class FileState {
     vefs_->Sync(inode_);
   }
 
+  void SoftSync() {
+    return;
+    if (inode_ == nullptr) {
+      return;
+    }
+    vefs_->SoftSync(inode_);
+  }
+
   void Delete() {
     if (inode_ == nullptr) {
       return;
@@ -175,7 +185,10 @@ class SequentialFileImpl : public SequentialFile {
     file_->Ref();
   }
 
-  ~SequentialFileImpl() override { file_->Unref(); }
+  ~SequentialFileImpl() override {
+    file_->SoftSync();
+    file_->Unref();
+  }
 
   Status Read(size_t n, Slice* result, char* scratch) override {
     Status s = file_->Read(pos_, n, result, scratch);
@@ -206,11 +219,15 @@ class RandomAccessFileImpl : public RandomAccessFile {
  public:
   explicit RandomAccessFileImpl(FileState* file) : file_(file) { file_->Ref(); }
 
-  ~RandomAccessFileImpl() override { file_->Unref(); }
+  ~RandomAccessFileImpl() override {
+    file_->SoftSync();
+    file_->Unref();
+  }
 
   Status Read(uint64_t offset, size_t n, Slice* result,
               char* scratch) const override {
-    return file_->Read(offset, n, result, scratch);
+    Status s = file_->Read(offset, n, result, scratch);
+    return s;
   }
 
  private:
@@ -221,7 +238,10 @@ class WritableFileImpl : public WritableFile {
  public:
   WritableFileImpl(FileState* file) : file_(file), pos_(0) { file_->Ref(); }
 
-  ~WritableFileImpl() override { file_->Unref(); }
+  ~WritableFileImpl() override {
+    file_->SoftSync();
+    file_->Unref();
+  }
 
   Status Append(const Slice& data) override {
     size_t write_size = data.size();
@@ -231,8 +251,9 @@ class WritableFileImpl : public WritableFile {
     if (write_size > 256 && (pos_) % 4 != 0) {
       printf("WARNING: not aligned. pos: %lu wsize: %lu\n", pos_, write_size);
     }
+#else
+    return file_->Append(write_data, write_size);
 #endif
-    //return file_->Append(write_data, write_size);
 
     // Fit as much as possible into buffer.
     size_t copy_size = std::min(write_size, kWritableFileBufferSize - pos_);

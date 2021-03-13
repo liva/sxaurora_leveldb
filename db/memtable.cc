@@ -93,7 +93,7 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   size_t internal_key_size = key_size + 8;
   const size_t encoded_len = VarintLength(internal_key_size) +
                              internal_key_size + VarintLength(val_size) +
-                             val_size + 4;
+    val_size /*+ 4*/;
   char* buf = arena_.Allocate(encoded_len);
   char* p = EncodeVarint32(buf, internal_key_size);
   memcpy(p, key.data(), key_size);
@@ -103,7 +103,8 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   p = EncodeVarint32(p, val_size);
   //  p = EncodeAlign(p);
   memcpy(p, value.data(), val_size);
-  assert(p + val_size <= buf + encoded_len);
+  assert(p + val_size == buf + encoded_len);
+  //assert(p + val_size <= buf + encoded_len);
   table_.Insert(buf);
 }
 

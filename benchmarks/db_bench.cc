@@ -729,6 +729,14 @@ class Benchmark {
     options.max_open_files = FLAGS_open_files;
     options.filter_policy = filter_policy_;
     options.reuse_logs = FLAGS_reuse_logs;
+    // printf("cm %d\n", options.create_if_missing);
+    // printf("bc %p\n", options.block_cache);
+    // printf("wb %zu\n", options.write_buffer_size);
+    // printf("mf %zu\n", options.max_file_size);
+    // printf("b %zu\n", options.block_size);
+    // printf("mo %d\n", options.max_open_files);
+    // printf("fp %p\n", options.filter_policy);
+    // printf("rl %d\n", options.reuse_logs);
     Status s = DB::Open(options, FLAGS_db, &db_);
     if (!s.ok()) {
       fprintf(stderr, "open error: %s\n", s.ToString().c_str());

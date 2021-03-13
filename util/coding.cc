@@ -71,14 +71,14 @@ void PutVarint64(std::string* dst, uint64_t v) {
 
 void PutLengthPrefixedSlice(std::string* dst, const Slice& value) {
   PutVarint32(dst, value.size());
-#ifdef __ve__
+#ifdef VE_OPT
   // architecture specific alignment
   if (value.size() > 32) {
     size_t padding = (4 - ((dst->length() + 1) % 4)) % 4;
     dst->append(1, padding);
     dst->append(padding, 0);
   }
-#endif /* __ve__ */
+#endif
   dst->append(value.data(), value.size());
 }
 
@@ -155,12 +155,12 @@ const char* GetLengthPrefixedSlice(const char* p, const char* limit,
   uint32_t len, padding = 0;
   p = GetVarint32Ptr(p, limit, &len);
   if (p == nullptr) return nullptr;
-#ifdef __ve__
+#ifdef VE_OPT
   if (len > 32) {
     padding = *p;
     p += padding + 1;
   }
-#endif /* __ve__ */
+#endif
   if (p + len > limit) return nullptr;
   *result = Slice(p, len);
   return p + len;
@@ -169,12 +169,12 @@ const char* GetLengthPrefixedSlice(const char* p, const char* limit,
 bool GetLengthPrefixedSlice(Slice* input, Slice* result) {
   uint32_t len, padding;
   if (GetVarint32(input, &len)) {
-#ifdef __ve__
+#ifdef VE_OPT
     if (len > 32) {
       padding = *(input->data());
       input->remove_prefix(1 + padding);
     }
-#endif /* __ve__ */
+#endif
     if (input->size() >= len) {
       *result = Slice(input->data(), len);
       input->remove_prefix(len);

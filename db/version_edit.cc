@@ -21,7 +21,9 @@ enum Tag {
   kNewFile = 7,
   // 8 was used for large value refs
   kPrevLogNumber = 9,
+#ifdef VE_OPT
   kDummy = 10,
+#endif
 };
 
 void VersionEdit::Clear() {
@@ -83,10 +85,12 @@ void VersionEdit::EncodeTo(std::string* dst) const {
     PutLengthPrefixedSlice(dst, f.largest.Encode());
   }
 
+#ifdef VE_OPT
   const int gap_size = (4 - dst->length() % 4) % 4;
   for(int i = 0; i < gap_size; i++) {
     PutVarint32(dst, kDummy);
   }
+#endif
 }
 
 static bool GetInternalKey(Slice* input, InternalKey* dst) {
@@ -190,8 +194,10 @@ Status VersionEdit::DecodeFrom(const Slice& src) {
           msg = "new-file entry";
         }
         break;
+#ifdef VE_OPT
     case kDummy:
       break;
+#endif
       default:
         msg = "unknown tag";
         break;
