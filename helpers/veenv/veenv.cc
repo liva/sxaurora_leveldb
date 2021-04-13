@@ -47,7 +47,8 @@
 #include "port/port.h"
 #include "port/thread_annotations.h"
 #include "util/mutexlock.h"
-#include "../../rtc.h"
+#include "rtc.h"
+#include "autogen.h"
 
 namespace leveldb {
 

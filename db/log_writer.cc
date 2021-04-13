@@ -10,7 +10,9 @@
 #include "util/coding.h"
 #include "util/crc32c.h"
 
-#include "../rtc.h"
+#include "rtc.h"
+#include "autogen.h"
+
 namespace leveldb {
 namespace log {
 

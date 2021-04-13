@@ -8,6 +8,8 @@
 #ifndef STORAGE_LEVELDB_DB_LOG_FORMAT_H_
 #define STORAGE_LEVELDB_DB_LOG_FORMAT_H_
 
+#include "autogen.h"
+
 namespace leveldb {
 namespace log {
 

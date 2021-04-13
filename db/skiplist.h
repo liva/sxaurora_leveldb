@@ -33,7 +33,7 @@
 
 #include "util/arena.h"
 #include "util/random.h"
-#include "../rtc.h"
+#include "rtc.h"
 
 #ifdef VECTOR_MEMTABLE
 #include "vector.h"

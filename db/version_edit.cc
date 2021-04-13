@@ -6,6 +6,7 @@
 
 #include "db/version_set.h"
 #include "util/coding.h"
+#include "autogen.h"
 
 namespace leveldb {
 

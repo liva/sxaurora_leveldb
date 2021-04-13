@@ -12,7 +12,8 @@
 #include "port/port.h"
 #include "util/coding.h"
 #include "ve.h"
-#include "../rtc.h"
+#include "rtc.h"
+#include "autogen.h"
 
 namespace leveldb {
 namespace crc32c {
