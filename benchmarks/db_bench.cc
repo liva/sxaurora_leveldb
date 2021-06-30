@@ -37,7 +37,6 @@
 #include <stdlib.h>
 #include <sys/types.h>
 
-#include <vefs.h>
 #include "leveldb/cache.h"
 #include "leveldb/db.h"
 #include "leveldb/env.h"
@@ -1063,6 +1062,6 @@ int main(int argc, char** argv) {
     delete leveldb::g_env;
   }
 
-  DumpTime();
+  //DumpTime();
   return 0;
 }

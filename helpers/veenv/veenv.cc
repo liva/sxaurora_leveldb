@@ -33,22 +33,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#include <string.h>
-
 #include <atomic>
 #include <limits>
 #include <map>
+#include <queue>
+#include <string.h>
 #include <string>
+#include <thread>
 #include <vector>
-
 #include <vefs.h>
+
 #include "leveldb/env.h"
 #include "leveldb/status.h"
+
 #include "port/port.h"
 #include "port/thread_annotations.h"
 #include "util/mutexlock.h"
-#include "rtc.h"
+
 #include "autogen.h"
+#include "rtc.h"
 
 namespace leveldb {
 
@@ -62,8 +65,7 @@ class FileState {
   FileState(const std::string& fn) : vefs_(Vefs::Get()), refs_(0) {
     inode_ = vefs_->Create(fn, false);
   }
-  ~FileState() {
-  }
+  ~FileState() {}
 
   // No copying allowed.
   FileState(const FileState&) = delete;
@@ -82,7 +84,6 @@ class FileState {
     if (inode_ == nullptr) {
       return 0;
     }
-    //    MutexLock lock(&blocks_mutex_);
     return vefs_->GetLen(inode_);
   }
 
@@ -90,15 +91,13 @@ class FileState {
     if (inode_ == nullptr) {
       return;
     }
-    //    MutexLock lock(&blocks_mutex_);
     vefs_->Truncate(inode_, 0);
   }
 
-  Status Read(uint64_t offset, size_t n, Slice* result, char* scratch) const {
+  Status Read(uint64_t offset, size_t n, Slice* result, char* scratch) {
     if (inode_ == nullptr) {
       return Status::OK();
     }
-    //    MutexLock lock(&blocks_mutex_);
     if (offset > vefs_->GetLen(inode_)) {
       printf("veenv: error\n");
       fflush(stdout);
@@ -127,14 +126,21 @@ class FileState {
     const char* src = data.data();
     size_t src_len = data.size();
 
-    return Append(src, src_len);
+    if (inode_ == nullptr) {
+      return Status::OK();
+    }
+    if (vefs_->Append(inode_, src, src_len) != Vefs::Status::kOk) {
+      printf("veenv: error\n");
+      fflush(stdout);
+      return Status::IOError("Error in VeFS");
+    }
+    return Status::OK();
   }
 
   Status Append(const char* buf, size_t len) {
     if (inode_ == nullptr) {
       return Status::OK();
     }
-    //    MutexLock lock(&blocks_mutex_);
     if (vefs_->Append(inode_, buf, len) != Vefs::Status::kOk) {
       printf("veenv: error\n");
       fflush(stdout);
@@ -237,7 +243,9 @@ class RandomAccessFileImpl : public RandomAccessFile {
 
 class WritableFileImpl : public WritableFile {
  public:
-  WritableFileImpl(FileState* file) : file_(file), pos_(0) { file_->Ref(); }
+  WritableFileImpl(FileState* file) : file_(file), pos_(0) {
+    file_->Ref();
+  }
 
   ~WritableFileImpl() override {
     file_->SoftSync();
@@ -264,6 +272,7 @@ class WritableFileImpl : public WritableFile {
     write_data += copy_size;
     write_size -= copy_size;
     pos_ += copy_size;
+
     if (write_size == 0) {
       return Status::OK();
     }
@@ -296,7 +305,7 @@ class WritableFileImpl : public WritableFile {
 
  private:
   Status FlushBuffer() {
-    //return Status::OK();
+    // return Status::OK();
     Status status = WriteUnbuffered(buf_, pos_);
     pos_ = 0;
     return status;
@@ -425,9 +434,16 @@ buffer
 */
 class VeEnv : public EnvWrapper {
  public:
-  explicit VeEnv(Env* base_env) : EnvWrapper(base_env) {}
+  explicit VeEnv(Env* base_env)
+      : EnvWrapper(base_env),
+        background_work_cv_(&background_work_queue_mutex_),
+        started_background_thread_(false) {}
 
   ~VeEnv() override {
+    // make sure the background thread is not running
+    // this is to prevent it to call VeFS requests and thus avoid its corruption
+    // as long as we unlock the mutex, the thread cannot continue its job.
+    background_work_mutex_.Lock();
     for (const auto& kvp : file_map_) {
       kvp.second->Unref();
     }
@@ -588,7 +604,67 @@ class VeEnv : public EnvWrapper {
     return Status::OK();
   }
 
+  void Schedule(void (*background_work_function)(void* background_work_arg),
+                void* background_work_arg) override {
+    background_work_queue_mutex_.Lock();
+
+    // Start the background thread, if we haven't done so already.
+    if (!started_background_thread_) {
+      started_background_thread_ = true;
+      std::thread background_thread(VeEnv::BackgroundThreadEntryPoint, this);
+      background_thread.detach();
+    }
+
+    // If the queue is empty, the background thread may be waiting for work.
+    if (background_work_queue_.empty()) {
+      background_work_cv_.Signal();
+    }
+
+    background_work_queue_.emplace(background_work_function,
+                                   background_work_arg);
+    background_work_queue_mutex_.Unlock();
+  }
+
  private:
+  // Stores the work item data in a Schedule() call.
+  //
+  // Instances are constructed on the thread calling Schedule() and used on the
+  // background thread.
+  //
+  // This structure is thread-safe beacuse it is immutable.
+  struct BackgroundWorkItem {
+    explicit BackgroundWorkItem(void (*function)(void* arg), void* arg)
+        : function(function), arg(arg) {}
+
+    void (*const function)(void*);
+    void* const arg;
+  };
+
+  static void BackgroundThreadEntryPoint(VeEnv* env) {
+    env->BackgroundThreadMain();
+  }
+
+  void BackgroundThreadMain() {
+    while (true) {
+      background_work_queue_mutex_.Lock();
+
+      // Wait until there is work to be done.
+      while (background_work_queue_.empty()) {
+        background_work_cv_.Wait();
+      }
+
+      assert(!background_work_queue_.empty());
+      auto background_work_function = background_work_queue_.front().function;
+      void* background_work_arg = background_work_queue_.front().arg;
+      background_work_queue_.pop();
+
+      background_work_queue_mutex_.Unlock();
+      background_work_mutex_.Lock();
+      background_work_function(background_work_arg);
+      background_work_mutex_.Unlock();
+    }
+  }
+
   FileState* GetFileStateIfExist(const std::string& fname) {
     MutexLock lock(&mutex_);
     FileSystem::iterator it = file_map_.find(fname);
@@ -607,6 +683,14 @@ class VeEnv : public EnvWrapper {
       return it->second;
     }
   }
+
+  port::Mutex background_work_mutex_;
+  port::Mutex background_work_queue_mutex_;
+  port::CondVar background_work_cv_ GUARDED_BY(background_work_queue_mutex_);
+  bool started_background_thread_ GUARDED_BY(background_work_queue_mutex_);
+
+  std::queue<BackgroundWorkItem> background_work_queue_
+      GUARDED_BY(background_work_queue_mutex_);
 
   // Map from filenames to FileState objects, representing a simple file
   // system.

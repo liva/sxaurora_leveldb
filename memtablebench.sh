@@ -1,10 +1,14 @@
 #!/bin/bash
 #GDB="/opt/nec/ve/bin/gdb -x gdbcmd --args"
 
+#if [ "${GDB}" == "" ]; then
+#    OUTPUT=">> ./leveldb_result/${2}_$3"
+#fi
+
 function leveldb() {
     pushd $1
     # --num=1000
-    sudo $GDB ./build/db_bench --write_buffer_size=65550000 --num=1000 --benchmarks="$2" --value_size=$3 $4 #>> ../leveldb_result/${2}_$3
+    sudo $GDB ./build/db_bench --write_buffer_size=65550000 --num=1000 --benchmarks="$2" --value_size=$3 $4 ${OUTPUT}
     popd
 }
 

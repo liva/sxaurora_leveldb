@@ -47,7 +47,7 @@
 #include "port/thread_annotations.h"
 #include "util/mutexlock.h"
 
-#include "ve.h"
+#include "util/ve.h"
 
 static inline __attribute__((always_inline)) void* ve_memcpy(void* buf1,
                                                              const void* buf2,

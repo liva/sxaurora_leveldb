@@ -1,25 +1,21 @@
-#!/bin/bash
+#!/bin/bash -le
 #GDB="/opt/nec/ve/bin/gdb -x gdbcmd --args"
 
+#if [ "${GDB}" == "" ]; then
+#    OUTPUT=">> ./leveldb_result/${2}_$3"
+#fi
+SCRIPT_DIR="../scripts"
+
 function leveldb() {
-    pushd $1
-    sudo $GDB ./build/db_bench --num=100000 --benchmarks="$2" --value_size=$3 $4 #>> ../leveldb_result/${2}_$3
-    popd
+    local NUM=50000 #100000
+    sudo $GDB ./build/db_bench --num="${NUM}" --benchmarks="$2" --value_size=$3 $4 ${OUTPUT}
 }
 
 function bench_set_vepci() {
-    #cleanup
-    echo '0000:b3:00.0' | sudo tee /sys/bus/pci/drivers/uio_pci_generic/unbind
-    echo '0000:b3:00.0' | sudo tee /sys/bus/pci/drivers/nvme/bind
-    sleep 3
-    
-    sudo blkdiscard /dev/nvme0n1
-    echo '0000:b3:00.0' | sudo tee /sys/bus/pci/drivers/nvme/unbind
-    echo '0000:b3:00.0' | sudo tee /sys/bus/pci/drivers/uio_pci_generic/bind
+    ${SCRIPT_DIR}/cleanup_nvme.sh
+    ${SCRIPT_DIR}/setup_uio_nvme.sh
     leveldb leveldb $1 $2 --vefs=1
-    echo '0000:b3:00.0' | sudo tee /sys/bus/pci/drivers/uio_pci_generic/unbind
-    echo '0000:b3:00.0' | sudo tee /sys/bus/pci/drivers/nvme/bind
-    sleep 3
+    ${SCRIPT_DIR}/cleanup_uio_nvme.sh
 }
 
 function bench_set_ramdisk() {
@@ -37,10 +33,17 @@ function bench_set_ssd() {
     sudo umount /mnt/ext4ssd
 }
 
+function bench_set_unvmemem() {
+  	rm -rf /home/sawamoto/ssd_mem
+  	dd if=/dev/zero of=/home/sawamoto/ssd_mem bs=1G count=10
+    leveldb leveldb $1 $2 --vefs=1
+  	rm -rf /home/sawamoto/ssd_mem
+}
+
 function benchmark() {
 for workload in fillseq,readseq #fillseq,readrandom fillrandom #fillseq,readseq fillseq,readrandom fillrandom fillsync #fillseq,readrandom fillseq fillrandom fillseq,readseq fillseq,readrandom fillseq,deleteseq fillseq,deleterandom fillseq,overwrite
 do
-    for vsize in 100 #100 1024 8192 65536
+    for vsize in 204800 #100 #100 1024 8192 65536
     do
 	#bench_set_ssd leveldb_x86 $workload $vsize
 	#leveldb leveldb_x86 $workload $vsize --mem=1
@@ -58,12 +61,8 @@ done
 }
 
 date > output
-#pushd leveldb
 #./build.sh
-#popd
 #benchmark
 
-pushd leveldb
-./build.sh "" #"-DVECTOR_CRC32C -DVE_OPT"
-popd
+./build.sh "VECTOR_CRC32C VE_OPT"
 benchmark

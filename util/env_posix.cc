@@ -27,7 +27,6 @@
 #include <type_traits>
 #include <utility>
 
-#include <vefs.h>
 #include "leveldb/env.h"
 #include "leveldb/slice.h"
 #include "leveldb/status.h"
@@ -121,10 +120,7 @@ class PosixSequentialFile final : public SequentialFile {
     while (true) {
       // auto offset = lseek(fd_, 0, SEEK_CUR);
       ::ssize_t read_size;
-      {
-        MEASURE_TIME;
-        read_size = ::read(fd_, scratch, n);
-      }
+      read_size = ::read(fd_, scratch, n);
 
       if (read_size < 0) {  // Read error.
         if (errno == EINTR) {
@@ -198,10 +194,7 @@ class PosixRandomAccessFile final : public RandomAccessFile {
 
     Status status;
     ssize_t read_size;
-    {
-      MEASURE_TIME;
-      read_size = ::pread(fd, scratch, n, static_cast<off_t>(offset));
-    }
+    read_size = ::pread(fd, scratch, n, static_cast<off_t>(offset));
     *result = Slice(scratch, (read_size < 0) ? 0 : read_size);
     if (read_size < 0) {
       // An error: return a non-ok status.
@@ -358,10 +351,7 @@ class PosixWritableFile final : public WritableFile {
     while (size > 0) {
       // auto offset = lseek(fd_, 0, SEEK_CUR);
       ssize_t write_result;
-      {
-        MEASURE_TIME;
-        write_result = ::write(fd_, data, size);
-      }
+      write_result = ::write(fd_, data, size);
       if (write_result < 0) {
         if (errno == EINTR) {
           continue;  // Retry
@@ -403,7 +393,6 @@ class PosixWritableFile final : public WritableFile {
   // The path argument is only used to populate the description string in the
   // returned Status if an error occurs.
   static Status SyncFd(int fd, const std::string& fd_path) {
-    MEASURE_TIME;
 #if HAVE_FULLFSYNC
     // On macOS and iOS, fsync() doesn't guarantee durability past power
     // failures. fcntl(F_FULLFSYNC) is required for that purpose. Some

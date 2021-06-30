@@ -30,7 +30,11 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-sudo rm -rf build
+if [ -e "build" ]; then
+    sudo rm -rf build/db_bench
+    sudo rm -rf libleveldb.a
+fi
+#sudo rm -rf build
 echo "#ifndef SCRIPT_AUTOGEN_H_" > include/autogen.h
 echo "#define SCRIPT_AUTOGEN_H_" >> include/autogen.h
 for OPT in ${1}
@@ -42,11 +46,6 @@ docker run --rm -it -v $PWD:$PWD -w $PWD vefs:develop sh -c "mkdir -p build && c
 
 docker rm -f leveldb || :
 docker run -d --name leveldb -it -v $PWD:$PWD -w $PWD vefs:develop sh
-#docker exec -it rocksdb mkdir workdir
-#docker exec -it rocksdb python -c 'import extract_archive; print extract_archive.extract_archive("librocksdb.a", "workdir")'
-#docker exec -it rocksdb python -c 'import extract_archive; print extract_archive.extract_archive("/opt/nec/ve/lib/libvedio.a", "workdir")'
-#docker exec -it leveldb /opt/nec/nosupport/llvm-ve/bin/llvm-ar rcs /opt/nec/ve/lib/librocksdb.a workdir/*.o
-#docker exec -it leveldb rm -r workdir
 docker exec -it leveldb sh -c 'cp build/libleveldb.a /opt/nec/ve/lib/ && cp -r include/* /opt/nec/ve/include'
 docker commit leveldb leveldb:ve
 docker rm -f leveldb
