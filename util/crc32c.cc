@@ -12,13 +12,9 @@
 #include "port/port.h"
 #include "util/coding.h"
 #include "ve.h"
-#include "rtc.h"
-#include "autogen.h"
 
 namespace leveldb {
 namespace crc32c {
-
-#if !defined( VECTOR_CRC32C )
 
 namespace {
 
@@ -269,20 +265,20 @@ constexpr inline const uint8_t* RoundUp(const uint8_t* pointer) {
 
 // Determine if the CPU running this program can accelerate the CRC32C
 // calculation.
-static bool CanAccelerateCRC32C() {
+/*static bool CanAccelerateCRC32C() {
   // port::AcceleretedCRC32C returns zero when unable to accelerate.
   static const char kTestCRCBuffer[] = "TestCRCBuffer";
   static const char kBufSize = sizeof(kTestCRCBuffer) - 1;
   static const uint32_t kTestCRCValue = 0xdcbc59fa;
 
   return port::AcceleratedCRC32C(0, kTestCRCBuffer, kBufSize) == kTestCRCValue;
-}
+}*/
 
-uint32_t Extend(uint32_t crc, const char* data, size_t n) {
-  static bool accelerate = CanAccelerateCRC32C();
+uint32_t ScalarExtend(uint32_t crc, const char* data, size_t n) {
+  /*static bool accelerate = CanAccelerateCRC32C();
   if (accelerate) {
     return port::AcceleratedCRC32C(crc, data, n);
-  }
+  }*/
 
   const uint8_t* p = reinterpret_cast<const uint8_t*>(data);
   const uint8_t* e = p + n;
@@ -381,11 +377,9 @@ uint32_t Extend(uint32_t crc, const char* data, size_t n) {
   return l ^ kCRC32Xor;
 }
 
-#else
-
 static const int kParallel = 256;
 
-const uint64_t kByteExtensionTable[256] = {
+const uint64_t kVectorByteExtensionTable[256] = {
     0x00000000, 0xf26b8303, 0xe13b70f7, 0x1350f3f4, 0xc79a971f, 0x35f1141c,
     0x26a1e7e8, 0xd4ca64eb, 0x8ad958cf, 0x78b2dbcc, 0x6be22838, 0x9989ab3b,
     0x4d43cfd0, 0xbf284cd3, 0xac78bf27, 0x5e133c24, 0x105ec76f, 0xe235446c,
@@ -430,111 +424,93 @@ const uint64_t kByteExtensionTable[256] = {
     0xd5cf889d, 0x27a40b9e, 0x79b737ba, 0x8bdcb4b9, 0x988c474d, 0x6ae7c44e,
     0xbe2da0a5, 0x4c4623a6, 0x5f16d052, 0xad7d5351};
 
-static uint64_t kStrideExtensionTable0[256];
-static uint64_t kStrideExtensionTable1[256];
-static uint64_t kStrideExtensionTable2[256];
-static uint64_t kStrideExtensionTable3[256];
+static uint64_t kVectorStrideExtensionTable0[256];
+static uint64_t kVectorStrideExtensionTable1[256];
+static uint64_t kVectorStrideExtensionTable2[256];
+static uint64_t kVectorStrideExtensionTable3[256];
 
-static uint64_t kHalfStrideExtensionTable0[256];
-static uint64_t kHalfStrideExtensionTable1[256];
-static uint64_t kHalfStrideExtensionTable2[256];
-static uint64_t kHalfStrideExtensionTable3[256];
+static uint64_t kVectorHalfStrideExtensionTable0[256];
+static uint64_t kVectorHalfStrideExtensionTable1[256];
+static uint64_t kVectorHalfStrideExtensionTable2[256];
+static uint64_t kVectorHalfStrideExtensionTable3[256];
 
-static uint64_t kQuaterStrideExtensionTable0[256];
-static uint64_t kQuaterStrideExtensionTable1[256];
-static uint64_t kQuaterStrideExtensionTable2[256];
-static uint64_t kQuaterStrideExtensionTable3[256];
+static uint64_t kVectorQuaterStrideExtensionTable0[256];
+static uint64_t kVectorQuaterStrideExtensionTable1[256];
+static uint64_t kVectorQuaterStrideExtensionTable2[256];
+static uint64_t kVectorQuaterStrideExtensionTable3[256];
 
-static uint64_t kEighthStrideExtensionTable0[256];
-static uint64_t kEighthStrideExtensionTable1[256];
-static uint64_t kEighthStrideExtensionTable2[256];
-static uint64_t kEighthStrideExtensionTable3[256];
+static uint64_t kVectorEighthStrideExtensionTable0[256];
+static uint64_t kVectorEighthStrideExtensionTable1[256];
+static uint64_t kVectorEighthStrideExtensionTable2[256];
+static uint64_t kVectorEighthStrideExtensionTable3[256];
 
-static uint64_t kSixteenthStrideExtensionTable0[256];
-static uint64_t kSixteenthStrideExtensionTable1[256];
-static uint64_t kSixteenthStrideExtensionTable2[256];
-static uint64_t kSixteenthStrideExtensionTable3[256];
+static uint64_t kVectorSixteenthStrideExtensionTable0[256];
+static uint64_t kVectorSixteenthStrideExtensionTable1[256];
+static uint64_t kVectorSixteenthStrideExtensionTable2[256];
+static uint64_t kVectorSixteenthStrideExtensionTable3[256];
 
 __attribute__((constructor))
 static void constructor() {
   for (int n = 0; n < 256; n++) {
-    uint64_t crc = kByteExtensionTable[n];
+    uint64_t crc = kVectorByteExtensionTable[n];
     for (int k = 0; k < kParallel / 4 - 4; k++) {
-      crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+      crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
     }
-    kSixteenthStrideExtensionTable0[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kSixteenthStrideExtensionTable1[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kSixteenthStrideExtensionTable2[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kSixteenthStrideExtensionTable3[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorSixteenthStrideExtensionTable0[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorSixteenthStrideExtensionTable1[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorSixteenthStrideExtensionTable2[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorSixteenthStrideExtensionTable3[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
     for (int k = 0; k < kParallel / 4 - 4; k++) {
-      crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+      crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
     }
-    kEighthStrideExtensionTable0[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kEighthStrideExtensionTable1[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kEighthStrideExtensionTable2[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kEighthStrideExtensionTable3[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorEighthStrideExtensionTable0[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorEighthStrideExtensionTable1[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorEighthStrideExtensionTable2[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorEighthStrideExtensionTable3[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
     for (int k = 0; k < kParallel / 2 - 4; k++) {
-      crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+      crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
     }
-    kQuaterStrideExtensionTable0[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kQuaterStrideExtensionTable1[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kQuaterStrideExtensionTable2[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kQuaterStrideExtensionTable3[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorQuaterStrideExtensionTable0[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorQuaterStrideExtensionTable1[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorQuaterStrideExtensionTable2[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorQuaterStrideExtensionTable3[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
     for (int k = 0; k < kParallel - 4; k++) {
-      crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+      crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
     }
-    kHalfStrideExtensionTable0[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kHalfStrideExtensionTable1[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kHalfStrideExtensionTable2[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kHalfStrideExtensionTable3[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorHalfStrideExtensionTable0[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorHalfStrideExtensionTable1[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorHalfStrideExtensionTable2[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorHalfStrideExtensionTable3[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
     for (int k = 0; k < 2 * kParallel - 4; k++) {
-      crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+      crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
     }
-    kStrideExtensionTable0[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kStrideExtensionTable1[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kStrideExtensionTable2[n] = crc;
-    crc = kByteExtensionTable[crc & 0xff] ^ (crc >> 8);
-    kStrideExtensionTable3[n] = crc;
+    kVectorStrideExtensionTable0[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorStrideExtensionTable1[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorStrideExtensionTable2[n] = crc;
+    crc = kVectorByteExtensionTable[crc & 0xff] ^ (crc >> 8);
+    kVectorStrideExtensionTable3[n] = crc;
   }
 }
 
-// CRCs are pre- and post- conditioned by xoring with all ones.
-static constexpr const uint32_t kCRC32Xor = static_cast<uint32_t>(0xffffffffU);
-
-// Reads a little-endian 32-bit integer from a 32-bit-aligned buffer.
-inline uint32_t ReadUint32LE(const uint8_t* buffer) {
-  return *(reinterpret_cast<const uint32_t*>(buffer));
-}
-
-// Returns the smallest address >= the given address that is aligned to N bytes.
-//
-// N must be a power of two.
-template <int N>
-constexpr inline const uint8_t* RoundUp(const uint8_t* pointer) {
-  return reinterpret_cast<uint8_t*>(
-      (reinterpret_cast<uintptr_t>(pointer) + (N - 1)) &
-      ~static_cast<uintptr_t>(N - 1));
-}
-
-uint32_t Extend(uint32_t crc, const char* data, size_t n) {
+uint32_t VectorExtend(uint32_t crc, const char* data, size_t n) {
   const uint8_t* p = reinterpret_cast<const uint8_t*>(data);
   const uint8_t* e = p + n;
   uint32_t l = crc ^ kCRC32Xor;
@@ -549,10 +525,10 @@ uint32_t Extend(uint32_t crc, const char* data, size_t n) {
 // Process one of the 4 strides of 4-byte data.
 #define STEP4(s)                                                               \
   do {                                                                         \
-    crci[s] = ReadUint32LE(p + s * 4) ^ kStrideExtensionTable3[crci[s] & 0xff] ^ \
-             kStrideExtensionTable2[(crci[s] >> 8) & 0xff] ^                    \
-             kStrideExtensionTable1[(crci[s] >> 16) & 0xff] ^                   \
-             kStrideExtensionTable0[crci[s] >> 24];                             \
+    crc##s = ReadUint32LE(p + s * 4) ^ kStrideExtensionTable3[crc##s & 0xff] ^ \
+             kStrideExtensionTable2[(crc##s >> 8) & 0xff] ^                    \
+             kStrideExtensionTable1[(crc##s >> 16) & 0xff] ^                   \
+             kStrideExtensionTable0[crc##s >> 24];                             \
   } while (0)
 
 // Process a 16-byte swath of 4 strides, each of which has 4 bytes of data.
@@ -593,10 +569,10 @@ uint32_t Extend(uint32_t crc, const char* data, size_t n) {
     ptr += (Ve::VrReg::SeqInit() / 2) * 8;
     Ve::VrReg bitshift_mask = (Ve::VrReg::SeqInit() & 1) * 32;
     crc ^= (Ve::VrReg::PtrInit(ptr) >> bitshift_mask) & 0xFFFFFFFF;
-    Ve::VrReg stride_table0((uint64_t)kStrideExtensionTable0);
-    Ve::VrReg stride_table1((uint64_t)kStrideExtensionTable1);
-    Ve::VrReg stride_table2((uint64_t)kStrideExtensionTable2);
-    Ve::VrReg stride_table3((uint64_t)kStrideExtensionTable3);
+    Ve::VrReg stride_table0((uint64_t)kVectorStrideExtensionTable0);
+    Ve::VrReg stride_table1((uint64_t)kVectorStrideExtensionTable1);
+    Ve::VrReg stride_table2((uint64_t)kVectorStrideExtensionTable2);
+    Ve::VrReg stride_table3((uint64_t)kVectorStrideExtensionTable3);
 
     ptr += 4 * kParallel;
     p += 4 * kParallel;
@@ -638,10 +614,10 @@ uint32_t Extend(uint32_t crc, const char* data, size_t n) {
     do {
       do {
         _ve_lvl(kParallel / 2);
-        Ve::VrReg st0((uint64_t)kHalfStrideExtensionTable0);
-        Ve::VrReg st1((uint64_t)kHalfStrideExtensionTable1);
-        Ve::VrReg st2((uint64_t)kHalfStrideExtensionTable2);
-        Ve::VrReg st3((uint64_t)kHalfStrideExtensionTable3);
+        Ve::VrReg st0((uint64_t)kVectorHalfStrideExtensionTable0);
+        Ve::VrReg st1((uint64_t)kVectorHalfStrideExtensionTable1);
+        Ve::VrReg st2((uint64_t)kVectorHalfStrideExtensionTable2);
+        Ve::VrReg st3((uint64_t)kVectorHalfStrideExtensionTable3);
         Ve::VrReg d1 = Ve::VrReg::PtrInit(st3 + ((crc & 0xff) << 3));
         Ve::VrReg d2 = Ve::VrReg::PtrInit(st2 + ((crc & 0xff00) >> 5));
         Ve::VrReg d3 = Ve::VrReg::PtrInit(st1 + ((crc & 0xff0000) >> 13));
@@ -652,10 +628,10 @@ uint32_t Extend(uint32_t crc, const char* data, size_t n) {
 
       do {
         _ve_lvl(kParallel / 4);
-        Ve::VrReg st0((uint64_t)kQuaterStrideExtensionTable0);
-        Ve::VrReg st1((uint64_t)kQuaterStrideExtensionTable1);
-        Ve::VrReg st2((uint64_t)kQuaterStrideExtensionTable2);
-        Ve::VrReg st3((uint64_t)kQuaterStrideExtensionTable3);
+        Ve::VrReg st0((uint64_t)kVectorQuaterStrideExtensionTable0);
+        Ve::VrReg st1((uint64_t)kVectorQuaterStrideExtensionTable1);
+        Ve::VrReg st2((uint64_t)kVectorQuaterStrideExtensionTable2);
+        Ve::VrReg st3((uint64_t)kVectorQuaterStrideExtensionTable3);
         Ve::VrReg d1 = Ve::VrReg::PtrInit(st3 + ((crc & 0xff) << 3));
         Ve::VrReg d2 = Ve::VrReg::PtrInit(st2 + ((crc & 0xff00) >> 5));
         Ve::VrReg d3 = Ve::VrReg::PtrInit(st1 + ((crc & 0xff0000) >> 13));
@@ -666,10 +642,10 @@ uint32_t Extend(uint32_t crc, const char* data, size_t n) {
 
       do {
         _ve_lvl(kParallel / 8);
-        Ve::VrReg st0((uint64_t)kEighthStrideExtensionTable0);
-        Ve::VrReg st1((uint64_t)kEighthStrideExtensionTable1);
-        Ve::VrReg st2((uint64_t)kEighthStrideExtensionTable2);
-        Ve::VrReg st3((uint64_t)kEighthStrideExtensionTable3);
+        Ve::VrReg st0((uint64_t)kVectorEighthStrideExtensionTable0);
+        Ve::VrReg st1((uint64_t)kVectorEighthStrideExtensionTable1);
+        Ve::VrReg st2((uint64_t)kVectorEighthStrideExtensionTable2);
+        Ve::VrReg st3((uint64_t)kVectorEighthStrideExtensionTable3);
         Ve::VrReg d1 = Ve::VrReg::PtrInit(st3 + ((crc & 0xff) << 3));
         Ve::VrReg d2 = Ve::VrReg::PtrInit(st2 + ((crc & 0xff00) >> 5));
         Ve::VrReg d3 = Ve::VrReg::PtrInit(st1 + ((crc & 0xff0000) >> 13));
@@ -680,10 +656,10 @@ uint32_t Extend(uint32_t crc, const char* data, size_t n) {
 
       do {
         _ve_lvl(kParallel / 16);
-        Ve::VrReg st0((uint64_t)kSixteenthStrideExtensionTable0);
-        Ve::VrReg st1((uint64_t)kSixteenthStrideExtensionTable1);
-        Ve::VrReg st2((uint64_t)kSixteenthStrideExtensionTable2);
-        Ve::VrReg st3((uint64_t)kSixteenthStrideExtensionTable3);
+        Ve::VrReg st0((uint64_t)kVectorSixteenthStrideExtensionTable0);
+        Ve::VrReg st1((uint64_t)kVectorSixteenthStrideExtensionTable1);
+        Ve::VrReg st2((uint64_t)kVectorSixteenthStrideExtensionTable2);
+        Ve::VrReg st3((uint64_t)kVectorSixteenthStrideExtensionTable3);
         Ve::VrReg d1 = Ve::VrReg::PtrInit(st3 + ((crc & 0xff) << 3));
         Ve::VrReg d2 = Ve::VrReg::PtrInit(st2 + ((crc & 0xff00) >> 5));
         Ve::VrReg d3 = Ve::VrReg::PtrInit(st1 + ((crc & 0xff0000) >> 13));
@@ -702,6 +678,112 @@ uint32_t Extend(uint32_t crc, const char* data, size_t n) {
     }
   }
 
+  
+  if ((e - p) >= kParallel * 2) {
+    _ve_lvl(kParallel / 4);
+    Ve::VrReg crc((int64_t)0);
+    crc.SetElement(0, l);
+    Ve::VrReg ptr((uint64_t)p);
+    ptr += (Ve::VrReg::SeqInit() / 2) * 8;
+    Ve::VrReg bitshift_mask = (Ve::VrReg::SeqInit() & 1) * 32;
+    crc ^= (Ve::VrReg::PtrInit(ptr) >> bitshift_mask) & 0xFFFFFFFF;
+    Ve::VrReg stride_table0((uint64_t)kVectorQuaterStrideExtensionTable0);
+    Ve::VrReg stride_table1((uint64_t)kVectorQuaterStrideExtensionTable1);
+    Ve::VrReg stride_table2((uint64_t)kVectorQuaterStrideExtensionTable2);
+    Ve::VrReg stride_table3((uint64_t)kVectorQuaterStrideExtensionTable3);
+
+    ptr += kParallel;
+    p += kParallel;
+
+    while ((e - p) >= kParallel) {
+      Ve::VrReg d1 = Ve::VrReg::PtrInit(stride_table3 + ((crc & 0xff) << 3));
+      Ve::VrReg d2 = Ve::VrReg::PtrInit(stride_table2 + ((crc & 0xff00) >> 5));
+      Ve::VrReg d3 = Ve::VrReg::PtrInit(stride_table1 + ((crc & 0xff0000) >> 13));
+      Ve::VrReg d4 = Ve::VrReg::PtrInit(stride_table0 + ((crc & 0xff000000) >> 21));
+      Ve::VrReg data = (Ve::VrReg::PtrInit(ptr) >> bitshift_mask) & 0xFFFFFFFF;
+      crc = data ^ d1 ^ d2 ^ d3 ^ d4;
+      ptr += kParallel;
+      p += kParallel;
+    }
+    
+    l = 0;
+
+    uint64_t crci[kParallel];
+    do {
+      do {
+        _ve_lvl(kParallel / 8);
+        Ve::VrReg st0((uint64_t)kVectorEighthStrideExtensionTable0);
+        Ve::VrReg st1((uint64_t)kVectorEighthStrideExtensionTable1);
+        Ve::VrReg st2((uint64_t)kVectorEighthStrideExtensionTable2);
+        Ve::VrReg st3((uint64_t)kVectorEighthStrideExtensionTable3);
+        Ve::VrReg d1 = Ve::VrReg::PtrInit(st3 + ((crc & 0xff) << 3));
+        Ve::VrReg d2 = Ve::VrReg::PtrInit(st2 + ((crc & 0xff00) >> 5));
+        Ve::VrReg d3 = Ve::VrReg::PtrInit(st1 + ((crc & 0xff0000) >> 13));
+        Ve::VrReg d4 = Ve::VrReg::PtrInit(st0 + ((crc & 0xff000000) >> 21));
+        crc = d1 ^ d2 ^ d3 ^ d4;
+        crc ^= crc.MoveWithPos(kParallel / 8);
+      } while(0);
+
+      do {
+        _ve_lvl(kParallel / 16);
+        Ve::VrReg st0((uint64_t)kVectorSixteenthStrideExtensionTable0);
+        Ve::VrReg st1((uint64_t)kVectorSixteenthStrideExtensionTable1);
+        Ve::VrReg st2((uint64_t)kVectorSixteenthStrideExtensionTable2);
+        Ve::VrReg st3((uint64_t)kVectorSixteenthStrideExtensionTable3);
+        Ve::VrReg d1 = Ve::VrReg::PtrInit(st3 + ((crc & 0xff) << 3));
+        Ve::VrReg d2 = Ve::VrReg::PtrInit(st2 + ((crc & 0xff00) >> 5));
+        Ve::VrReg d3 = Ve::VrReg::PtrInit(st1 + ((crc & 0xff0000) >> 13));
+        Ve::VrReg d4 = Ve::VrReg::PtrInit(st0 + ((crc & 0xff000000) >> 21));
+        crc = d1 ^ d2 ^ d3 ^ d4;
+        crc ^= crc.MoveWithPos(kParallel / 16);
+      } while(0);
+
+      crc.WriteToMem(crci);
+      _ve_lvl(kParallel);
+    } while(0);
+
+    for(int j = 0; j < kParallel / 16; j++) {
+      uint64_t x = crci[j];
+      STEP4W(x);
+    }
+  }
+  
+  if ((e - p) >= 16) {
+    // Load a 16-byte swath into the stride partial results.
+    uint32_t crc0 = ReadUint32LE(p + 0 * 4) ^ l;
+    uint32_t crc1 = ReadUint32LE(p + 1 * 4);
+    uint32_t crc2 = ReadUint32LE(p + 2 * 4);
+    uint32_t crc3 = ReadUint32LE(p + 3 * 4);
+    p += 16;
+
+    // It is possible to get better speeds (at least on x86) by interleaving
+    // prefetching 256 bytes ahead with processing 64 bytes at a time. See the
+    // portable implementation in https://github.com/google/crc32c/.
+
+    // Process one 16-byte swath at a time.
+    while ((e - p) >= 16) {
+      STEP16;
+    }
+
+    // Advance one word at a time as far as possible.
+    while ((e - p) >= 4) {
+      STEP4(0);
+      uint32_t tmp = crc0;
+      crc0 = crc1;
+      crc1 = crc2;
+      crc2 = crc3;
+      crc3 = tmp;
+      p += 4;
+    }
+
+    // Combine the 4 partial stride results.
+    l = 0;
+    STEP4W(crc0);
+    STEP4W(crc1);
+    STEP4W(crc2);
+    STEP4W(crc3);
+  }
+
   // Process the last few bytes.
   while (p != e) {
     STEP1;
@@ -712,7 +794,6 @@ uint32_t Extend(uint32_t crc, const char* data, size_t n) {
 #undef STEP1
   return l ^ kCRC32Xor;
 }
-  
-#endif
+
 }  // namespace crc32c
 }  // namespace leveldb

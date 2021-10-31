@@ -11,7 +11,7 @@
 #include "util/crc32c.h"
 
 #include "rtc.h"
-#include "autogen.h"
+#include "leveldb_autogen_conf.h"
 
 namespace leveldb {
 namespace log {

@@ -12,7 +12,7 @@
 #include "leveldb/slice.h"
 #include "leveldb/status.h"
 #include "leveldb/table_builder.h"
-#include "autogen.h"
+#include "leveldb_autogen_conf.h"
 
 namespace leveldb {
 

@@ -35,13 +35,13 @@ if [ -e "build" ]; then
     sudo rm -rf libleveldb.a
 fi
 #sudo rm -rf build
-echo "#ifndef SCRIPT_AUTOGEN_H_" > include/autogen.h
-echo "#define SCRIPT_AUTOGEN_H_" >> include/autogen.h
+echo "#ifndef LEVELDB_AUTOGEN_CONF_H_" > include/leveldb_autogen_conf.h
+echo "#define LEVELDB_AUTOGEN_CONF_H_" >> include/leveldb_autogen_conf.h
 for OPT in ${1}
 do
-    echo "#define ${OPT}" >> include/autogen.h
+    echo "#define ${OPT}" >> include/leveldb_autogen_conf.h
 done
-echo "#endif" >> include/autogen.h
+echo "#endif" >> include/leveldb_autogen_conf.h
 docker run --rm -it -v $PWD:$PWD -w $PWD vefs:develop sh -c "mkdir -p build && cd build && CC=/opt/nec/nosupport/llvm-ve/bin/clang CXX=/opt/nec/nosupport/llvm-ve/bin/clang++ AR=/opt/nec/nosupport/llvm-ve/bin/llvm-ar CFLAGS='--target=ve-linux -g3' CXXFLAGS='--target=ve-linux -g3' LDFLAGS='--target=ve-linux -g' cmake3 -DCMAKE_BUILD_TYPE=Release -DCMAKE_VERBOSE_MAKEFILE=ON .. && cmake3 --build . -j12"
 
 docker rm -f leveldb || :
@@ -49,5 +49,5 @@ docker run -d --name leveldb -it -v $PWD:$PWD -w $PWD vefs:develop sh
 docker exec -it leveldb sh -c 'cp build/libleveldb.a /opt/nec/ve/lib/ && cp -r include/* /opt/nec/ve/include'
 docker commit leveldb leveldb:ve
 docker rm -f leveldb
-rm -rf include/autogen.h
+rm -rf include/leveldb_autogen_conf.h
 

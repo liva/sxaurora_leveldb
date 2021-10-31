@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "leveldb_autogen_conf.h"
 
 namespace leveldb {
 namespace crc32c {
@@ -14,7 +15,16 @@ namespace crc32c {
 // Return the crc32c of concat(A, data[0,n-1]) where init_crc is the
 // crc32c of some string A.  Extend() is often used to maintain the
 // crc32c of a stream of data.
-uint32_t Extend(uint32_t init_crc, const char* data, size_t n);
+uint32_t ScalarExtend(uint32_t crc, const char *data, size_t n);
+uint32_t VectorExtend(uint32_t crc, const char *data, size_t n);
+inline uint32_t Extend(uint32_t crc, const char *data, size_t n)
+{
+#if !defined(VECTOR_CRC32C)
+            return ScalarExtend(crc, data, n);
+#else
+            return VectorExtend(crc, data, n);
+#endif
+}
 
 // Return the crc32c of data[0,n-1]
 inline uint32_t Value(const char* data, size_t n) { return Extend(0, data, n); }

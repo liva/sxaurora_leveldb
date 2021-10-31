@@ -50,7 +50,7 @@
 #include "port/thread_annotations.h"
 #include "util/mutexlock.h"
 
-#include "autogen.h"
+#include "leveldb_autogen_conf.h"
 #include "rtc.h"
 
 namespace leveldb {

@@ -3,7 +3,7 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
 #include "util/coding.h"
-#include "autogen.h"
+#include "leveldb_autogen_conf.h"
 
 namespace leveldb {
 

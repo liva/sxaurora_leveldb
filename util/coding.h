@@ -16,7 +16,7 @@
 
 #include "leveldb/slice.h"
 #include "port/port.h"
-#include "autogen.h"
+#include "leveldb_autogen_conf.h"
 
 namespace leveldb {
 

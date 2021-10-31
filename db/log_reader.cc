@@ -9,7 +9,7 @@
 #include "leveldb/env.h"
 #include "util/coding.h"
 #include "util/crc32c.h"
-#include "autogen.h"
+#include "leveldb_autogen_conf.h"
 
 namespace leveldb {
 namespace log {
